@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.17
+// @version      1.5.18
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -222,10 +222,10 @@
       if (found[index]) {
         lines.push(`ASE ${CONFIG.aseCode} registrado para o ${label}.`);
       } else if (absenceFound?.[index]) {
-        lines.push(`ASE ${CONFIG.aseCode} não registrado para o ${label}.`);
+        lines.push(`ASE ${CONFIG.aseCode} não encontrado para o ${label} (${turn.date}).`);
         lines.push(`Registre o ASE ${CONFIG.aseCode} para o ${label}.`);
       } else if (!absenceFound) {
-        lines.push(`ASE ${CONFIG.aseCode} não registrado para o ${label}.`);
+        lines.push(`ASE ${CONFIG.aseCode} não encontrado para o ${label} (${turn.date}).`);
       }
       return lines.join('\n');
     });
@@ -254,8 +254,9 @@
     }
     const absenceFound = readTurnASEs(history.doc, CONFIG.absenceAseCode, 'INATIVO');
     const message = turnReport(history.historyTitle, found, electorName(history.doc, history.historyTitle), absenceFound);
-    // Conferência concluída: verde, com ou sem necessidade de registrar o ASE 167.
-    const positive = Boolean(found && absenceFound);
+    // Uma pendência exige 094 INATIVO e ausência de 167 na mesma data.
+    const pending = Boolean(found && absenceFound?.some((absence, index) => absence && !found[index]));
+    const tone = !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
     const input = panel?.querySelector('[data-title]');
     // Preserva outro título que já esteja sendo preparado para a próxima consulta.
     const clearInput = Boolean(found?.some(Boolean)) && (!input || !input.value.trim()
@@ -268,7 +269,7 @@
       setStatus(message);
       if (saveCleared) store();
     }
-    showPopover(message, history.doc, 10000, positive ? 'success' : 'warning');
+    showPopover(message, history.doc, 10000, tone);
     // Marca a leitura após concluir a atualização do aviso.
     checkedHistories.set(history.doc, history.historyTitle);
     historyWaits.delete(history.doc);
@@ -451,6 +452,8 @@
     popover.style.whiteSpace = 'pre-line';
     if (tone === 'success') {
       popover.style.background = '#edf9f0'; popover.style.borderColor = '#278046'; popover.style.color = '#14562b';
+    } else if (tone === 'pending') {
+      popover.style.background = '#fff0df'; popover.style.borderColor = '#d96b00'; popover.style.color = '#7a3500';
     } else if (tone === 'error') {
       popover.style.background = '#fdecec'; popover.style.borderColor = '#b3261e'; popover.style.color = '#6b130e';
     }
