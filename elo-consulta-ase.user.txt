@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.10
+// @version      1.5.11
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -378,6 +378,15 @@
     return Boolean(view?.doc?.readyState === 'complete' && visible(view.input) && visible(view.consult));
   }
 
+  function navigationReady(views) {
+    return views.every(view => {
+      try {
+        // load_menu() continua por AJAX depois do load. Navegar antes pode abortá-lo.
+        return view.doc.readyState === 'complete' && !(view.win.jQuery?.active > 0);
+      } catch { return false; } // Um quadro em troca de documento será relido.
+    });
+  }
+
   function chooseAction(current, views) {
     if (!current || current.phase === 'done') return null;
     if (current.phase === 'query') {
@@ -499,14 +508,18 @@
       failWith('Título inválido. Corrija os números para consultar.');
       return;
     }
-    if (!queryReady(view)) {
+    const views = collect();
+    if (!queryReady(view) || !navigationReady(views)) {
       // O body.onload do ELO inicializa e limpa o formulário. Aguarda antes de preencher.
-      state = {phase:'query', title, updated:Date.now()};
+      if (state?.phase !== 'query' || state.title !== title) {
+        state = {phase:'query', title, updated:Date.now()};
+      }
       try {
         store();
-        setStatus('Aguardando o ELO terminar de inicializar o formulário…');
+        setStatus('Aguardando o ELO concluir o carregamento interno para consultar…');
         updateButtons();
         refreshActivity();
+        scheduleTick(100);
       } catch (error) { stop('Não foi possível preparar a consulta. ' + error.message); }
       return;
     }
@@ -527,7 +540,7 @@
       else view.input.value = title;
       // O ELO avisa título inválido com alert(). Captura a mensagem para tratá-la aqui.
       const alerts = [];
-      const wins = collect().map(item => item.win);
+      const wins = views.map(item => item.win);
       withCapturedAlerts(wins, alerts, () => {
         view.input.dispatchEvent(new view.win.Event('input', {bubbles:true}));
         // Não simula teclas: rotinas legadas podem exigir dados que Event não possui.
@@ -803,7 +816,13 @@
         return;
       }
       // Busca um elemento atual e valida de novo antes de acionar o evento nativo.
-      const fresh = chooseAction(state, collect());
+      const freshViews = collect();
+      if (!navigationReady(freshViews)) {
+        setStatus('Aguardando o ELO concluir o carregamento interno antes de avançar…');
+        scheduleTick(100);
+        return;
+      }
+      const fresh = chooseAction(state, freshViews);
       if (!fresh || fresh.kind !== action.kind || !visible(fresh.node)) return;
       state.phase = action.kind === 'result' ? 'detail' : 'history';
       state.updated = Date.now();
