@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.28
+// @version      1.5.29
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -25,6 +25,7 @@
       Object.freeze({label:'1º turno', date:'04/10/2026'}),
       Object.freeze({label:'2º turno', date:'25/10/2026'})
     ]),
+    popoverDurationMs: 10000, // duração de todos os avisos, incluindo erros
     stepTimeoutMs: 45000,  // espera máxima em cada etapa (consulta, resultado, detalhe, histórico)
     historyRetryMs: 4000,  // tempo para a tabela do histórico aparecer antes de acusar falha
     noResultDelayMs: 1500, // o aviso de "sem resultado" precisa persistir por esse tempo
@@ -280,7 +281,7 @@
       setStatus(message);
       if (saveCleared) store();
     }
-    showPopover(message, history.doc, 10000, tone);
+    showPopover(message, history.doc, tone);
     // Marca a leitura após concluir a atualização do aviso.
     checkedHistories.set(history.doc, history.historyTitle);
     historyWaits.delete(history.doc);
@@ -453,13 +454,13 @@
     popover = null;
   }
 
-  function showPopover(message, doc, duration = 3000, tone = 'warning') {
+  function showPopover(message, doc, tone = 'warning') {
     clearPopover();
     if (doc?.body?.tagName !== 'BODY') return;
     popover = doc.createElement('div');
     popover.setAttribute('role', 'alert');
     popover.setAttribute('data-elo-ase-popover', '');
-    popover.style.cssText = 'position:fixed;inset:auto;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;box-sizing:border-box;width:max-content;min-width:min(520px,calc(100vw - 32px));max-width:calc(100vw - 32px);padding:24px 28px;border:2px solid #c58a14;border-radius:12px;background:#fff8e6;color:#593b00;box-shadow:0 10px 40px #0004;font:600 18px/1.5 Arial,sans-serif;text-align:center;z-index:2147483647;pointer-events:none;overflow-wrap:anywhere';
+    popover.style.cssText = 'position:fixed;inset:auto;left:50%;top:50%;transform:translate(-50%,-50%);margin:0;box-sizing:border-box;width:max-content;min-width:min(520px,calc(100vw - 32px));max-width:calc(100vw - 32px);padding:36px 40px 24px;border:2px solid #c58a14;border-radius:12px;background:#fff8e6;color:#593b00;box-shadow:0 10px 40px #0004;font:600 18px/1.5 Arial,sans-serif;text-align:center;z-index:2147483647;pointer-events:none;overflow-wrap:anywhere';
     popover.style.whiteSpace = 'pre-line';
     if (tone === 'success') {
       popover.style.background = '#edf9f0'; popover.style.borderColor = '#278046'; popover.style.color = '#14562b';
@@ -469,6 +470,15 @@
       popover.style.background = '#fdecec'; popover.style.borderColor = '#b3261e'; popover.style.color = '#6b130e';
     }
     popover.textContent = message;
+    const close = doc.createElement('button');
+    close.type = 'button';
+    close.textContent = '×';
+    close.title = 'Fechar aviso';
+    close.setAttribute('aria-label', 'Fechar aviso');
+    close.style.cssText = 'position:absolute;top:8px;right:8px;width:28px;height:28px;margin:0;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;font:700 24px/1 Arial,sans-serif;cursor:pointer;pointer-events:auto;display:flex;align-items:center;justify-content:center';
+    close.addEventListener('click', clearPopover);
+    popover.append(close);
+    isolatePanelEvents(popover);
     doc.body.append(popover);
     // A camada superior mantém o aviso à frente do painel, quando disponível.
     if (typeof popover.showPopover === 'function') {
@@ -476,7 +486,7 @@
       try { popover.showPopover(); }
       catch { popover.removeAttribute('popover'); }
     }
-    popoverTimer = window.setTimeout(clearPopover, duration);
+    popoverTimer = window.setTimeout(clearPopover, CONFIG.popoverDurationMs);
   }
 
   function stop(message) {
@@ -627,7 +637,7 @@
     const message = `O ELO recusou o título ${formatTitle(title)}: ${reason}`;
     stop(message);
     setCollapsed(false);
-    showPopover(message + '\nCorrija o título e consulte novamente.', panel?.ownerDocument, 8000, 'error');
+    showPopover(message + '\nCorrija o título e consulte novamente.', panel?.ownerDocument, 'error');
     focusTitleInput(true);
   }
 
@@ -655,7 +665,7 @@
     setStatus(message);
     if (noAse) {
       setCollapsed(false);
-      showPopover(message, panel?.ownerDocument, 10000, 'success');
+      showPopover(message, panel?.ownerDocument, 'success');
     }
     updateButtons();
   }
@@ -778,7 +788,7 @@
   function failWith(message) {
     stop(message);
     setCollapsed(false);
-    showPopover(message, panel?.ownerDocument, 8000, 'error');
+    showPopover(message, panel?.ownerDocument, 'error');
     focusTitleInput(true);
   }
 
