@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.19
+// @version      1.5.20
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -209,6 +209,11 @@
 
   function turnReport(title, found, name = '', absenceFound) {
     const heading = `ELEITOR: ${name}\nTÍTULO: ${formatTitle(title)}`;
+    if (found?.every(Boolean)) {
+      const registered = CONFIG.turns.map(turn =>
+        `ASE ${CONFIG.aseCode} registrado no ${turn.label.replace(/turno/gi, 'Turno')} (${turn.date}).`).join('\n');
+      return `${heading}\n\n${registered}\n\nNão há lançamentos a serem feitos.`;
+    }
     const absence = absenceFound === undefined ? '' : absenceReport(absenceFound);
     if (!found) {
       return heading + '\nNão foi possível identificar a tabela do histórico ASE. Confira manualmente os registros dos turnos.'
@@ -257,7 +262,8 @@
     const message = turnReport(history.historyTitle, found, electorName(history.doc, history.historyTitle), absenceFound);
     // Uma pendência exige 094 ATIVO/INATIVO e ausência de 167 na mesma data.
     const pending = Boolean(found && absenceFound?.some((absence, index) => absence && !found[index]));
-    const tone = !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
+    const tone = found?.every(Boolean) ? 'success'
+      : !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
     const input = panel?.querySelector('[data-title]');
     // Preserva outro título que já esteja sendo preparado para a próxima consulta.
     const clearInput = Boolean(found?.some(Boolean)) && (!input || !input.value.trim()
