@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.29
+// @version      1.5.30
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -270,8 +270,10 @@
     const tone = found?.every(Boolean) ? 'success'
       : !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
     const input = panel?.querySelector('[data-title]');
+    // Só considera ausência confirmada quando a leitura dos dois turnos foi possível.
+    const noAbsence = Boolean(absenceFound && !absenceFound.some(Boolean));
     // Preserva outro título que já esteja sendo preparado para a próxima consulta.
-    const clearInput = Boolean(found?.some(Boolean)) && (!input || !input.value.trim()
+    const clearInput = (Boolean(found?.some(Boolean)) || noAbsence) && (!input || !input.value.trim()
       || normalizeTitle(input.value) === history.historyTitle);
     const saveCleared = clearInput && state?.title === history.historyTitle && !state.clearTitle;
     if (saveCleared) state.clearTitle = true;
@@ -860,8 +862,12 @@
         const empty = CONFIG.turns.map(() => false);
         const detail = views.find(view => view.noAseTitle === state.title);
         const name = detail ? electorName(detail.doc, state.title) : '';
+        const input = panel?.querySelector('[data-title]');
+        const clearInput = !input || !input.value.trim() || normalizeTitle(input.value) === state.title;
+        if (clearInput) state.clearTitle = true;
         finish(turnReport(state.title, empty, name, empty), true,
           turnReport(state.title, empty, '', empty));
+        if (clearInput) clearTitleInput();
         return;
       }
       // Busca um elemento atual e valida de novo antes de acionar o evento nativo.
