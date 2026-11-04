@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.21
+// @version      1.5.22
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -258,9 +258,9 @@
         return 'waiting';
       }
     }
-    const absenceFound = readTurnASEs(history.doc, CONFIG.absenceAseCode, ['ATIVO', 'INATIVO']);
+    const absenceFound = readTurnASEs(history.doc, CONFIG.absenceAseCode, ['ATIVO', 'INATIVO', 'FACULTADO']);
     const message = turnReport(history.historyTitle, found, electorName(history.doc, history.historyTitle), absenceFound);
-    // Uma pendência exige 094 ATIVO/INATIVO e ausência de 167 na mesma data.
+    // Uma pendência exige 094 ATIVO, INATIVO ou FACULTADO e ausência de 167 na mesma data.
     const pending = Boolean(found && absenceFound?.some((absence, index) => absence && !found[index]));
     const tone = found?.every(Boolean) ? 'success'
       : !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
