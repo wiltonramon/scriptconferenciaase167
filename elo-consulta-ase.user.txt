@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.5
+// @version      1.5.6
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -509,7 +509,7 @@
       const wins = collect().map(item => item.win);
       withCapturedAlerts(wins, alerts, () => {
         view.input.dispatchEvent(new view.win.Event('input', {bubbles:true}));
-        view.input.dispatchEvent(new view.win.Event('keyup', {bubbles:true}));
+        // Não simula teclas: rotinas legadas podem exigir dados que Event não possui.
         view.input.dispatchEvent(new view.win.Event('change', {bubbles:true}));
         view.input.blur(); // Executa o onblur nativo do ELO antes da consulta.
       });
