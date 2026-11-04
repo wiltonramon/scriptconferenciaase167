@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.2
+// @version      1.5.3
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -58,6 +58,23 @@
     return String(value ?? '').replace(/\D/g, '').slice(0, 12).replace(/(\d{4})(?=\d)/g, '$1 ');
   }
 
+  function isValidTitle(value) {
+    const title = normalizeTitle(value);
+    if (!title || /^(\d)\1{11}$/.test(title)) return false;
+    const uf = Number(title.slice(8, 10));
+    if (uf < 1 || uf > 28) return false;
+    const digits = Array.from(title, Number);
+    // Módulo 11: pesos 2 a 9 no sequencial e 7, 8, 9 no código de UF + DV.
+    // SP e MG usam 1 quando o resto original é zero; resto 10 resulta em zero.
+    const checkDigit = sum => {
+      const remainder = sum % 11;
+      return remainder === 10 ? 0 : remainder === 0 && uf <= 2 ? 1 : remainder;
+    };
+    const first = checkDigit(digits.slice(0, 8).reduce((sum, digit, index) => sum + digit * (index + 2), 0));
+    const second = checkDigit(digits[8] * 7 + digits[9] * 8 + first * 9);
+    return digits[10] === first && digits[11] === second;
+  }
+
   function formatTitleInput(event) {
     const input = event.currentTarget;
     const position = input.selectionStart ?? input.value.length;
@@ -72,6 +89,7 @@
     if (event.inputType === 'deleteContentForward' && formatted[caret] === ' ') caret++;
     input.value = formatted;
     input.setSelectionRange(caret, caret);
+    updateButtons();
   }
 
   function validState(value) {
@@ -234,6 +252,7 @@
     historyWaits.delete(history.doc);
     if (clearInput) {
       if (input) input.value = '';
+      updateButtons();
       setCollapsed(false);
       focusTitleInput();
     }
@@ -408,7 +427,25 @@
   function updateButtons() {
     if (!panel) return;
     const active = busy();
-    panel.querySelector('[data-submit]').disabled = active;
+    const input = panel.querySelector('[data-title]');
+    const valid = isValidTitle(input.value);
+    const length = input.value.replace(/\D/g, '').length;
+    const invalid = length === 12 && !valid;
+    const feedback = panel.querySelector('[data-title-feedback]');
+    const message = !length ? 'Digite os 12 dígitos do título.'
+      : length < 12 ? `Complete o título: faltam ${12 - length} dígito(s).`
+      : invalid ? 'Título inválido. Corrija os números para consultar.'
+      : 'Dígitos verificadores válidos.';
+    input.setAttribute('aria-invalid', String(invalid));
+    input.style.borderColor = invalid ? '#b3261e' : valid ? '#278046' : '#a6b6c5';
+    if (feedback) {
+      if (feedback.textContent !== message) feedback.textContent = message;
+      feedback.style.color = invalid ? '#b3261e' : valid ? '#14562b' : '#526577';
+    }
+    const submit = panel.querySelector('[data-submit]');
+    submit.disabled = active || !valid;
+    submit.style.opacity = submit.disabled ? '0.55' : '1';
+    submit.style.cursor = submit.disabled ? 'not-allowed' : 'pointer';
     panel.querySelector('[data-cancel]').disabled = !active;
     panel.querySelector('[data-return]').disabled = !home;
   }
@@ -417,7 +454,7 @@
     event.preventDefault();
     if (busy()) return;
     const title = normalizeTitle(panel.querySelector('[data-title]').value);
-    if (!title) { setStatus('Digite os 12 números do título, com ou sem espaços.'); return; }
+    if (!isValidTitle(title)) { updateButtons(); focusTitleInput(); return; }
     const view = collect().find(v => visible(v.input) && visible(v.consult));
     if (view) { submitQuery(view, title); return; }
     const destination = safeHome(home);
@@ -435,6 +472,10 @@
   }
 
   function submitQuery(view, title) {
+    if (!isValidTitle(title)) {
+      failWith('Título inválido. Corrija os números para consultar.');
+      return;
+    }
     if (!queryReady(view)) {
       // O body.onload do ELO inicializa e limpa o formulário. Aguarda antes de preencher.
       state = {phase:'query', title, updated:Date.now()};
@@ -560,6 +601,7 @@
     const input = panel?.querySelector('[data-title]');
     if (!input) return;
     input.value = '';
+    updateButtons();
     // Evita restaurar o título apagado quando o painel for recriado.
     if (state && !state.clearTitle) {
       state.clearTitle = true;
@@ -581,7 +623,7 @@
     panel.setAttribute('aria-label', 'Consulta rápida ASE');
     panel.style.cssText = 'position:fixed;top:80px;right:20px;width:292px;max-width:calc(100vw - 24px);z-index:2147483647;background:#fff;color:#182333;border:1px solid #b7c6d5;border-radius:10px;box-shadow:0 5px 24px #0003;font:14px Arial,sans-serif;box-sizing:border-box;overflow:hidden;text-align:left';
     panel.innerHTML = `<div data-handle style="background:#174975;color:white;padding:12px 14px;cursor:move;touch-action:none;font-weight:bold;display:flex;justify-content:space-between;align-items:center">Consulta rápida ASE<button type="button" data-collapse aria-label="Recolher painel" style="background:transparent;color:white;border:0;font-size:20px;cursor:pointer">−</button></div>
-      <div data-body style="padding:14px"><form data-form><label style="display:block;margin-bottom:7px" for="elo-ase-titulo">Título de eleitor</label><div style="position:relative"><input id="elo-ase-titulo" data-title type="text" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="0000 0000 0000" style="box-sizing:border-box;width:100%;font:18px Arial;padding:9px 38px 9px 9px;border:1px solid #a6b6c5;border-radius:5px"><button data-clear-title type="button" aria-label="Limpar título" title="Limpar título (Esc)" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:30px;height:30px;padding:0;border:0;border-radius:4px;background:transparent;color:#526577;font:20px Arial,sans-serif;cursor:pointer">×</button></div><button data-submit type="submit" style="width:100%;padding:10px;margin-top:10px;border:0;border-radius:5px;background:#174975;color:white;font-weight:bold;cursor:pointer">Consultar ASE</button></form><button data-return type="button" style="width:100%;padding:9px;margin-top:8px;cursor:pointer">Voltar à consulta inicial</button><button data-cancel type="button" style="width:100%;padding:7px;margin-top:6px;cursor:pointer">Parar automação</button><p data-status role="status" aria-live="polite" style="font-size:12px;line-height:1.45;margin:12px 0 0"></p></div>`;
+      <div data-body style="padding:14px"><form data-form><label style="display:block;margin-bottom:7px" for="elo-ase-titulo">Título de eleitor</label><div style="position:relative"><input id="elo-ase-titulo" aria-describedby="elo-ase-titulo-feedback" data-title type="text" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="0000 0000 0000" style="box-sizing:border-box;width:100%;font:18px Arial;padding:9px 38px 9px 9px;border:1px solid #a6b6c5;border-radius:5px"><button data-clear-title type="button" aria-label="Limpar título" title="Limpar título (Esc)" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:30px;height:30px;padding:0;border:0;border-radius:4px;background:transparent;color:#526577;font:20px Arial,sans-serif;cursor:pointer">×</button></div><p id="elo-ase-titulo-feedback" data-title-feedback aria-live="polite" style="font-size:12px;line-height:1.4;margin:6px 0 0;color:#526577">Digite os 12 dígitos do título.</p><button disabled data-submit type="submit" style="width:100%;padding:10px;margin-top:10px;border:0;border-radius:5px;background:#174975;color:white;font-weight:bold;cursor:pointer">Consultar ASE</button></form><button data-return type="button" style="width:100%;padding:9px;margin-top:8px;cursor:pointer">Voltar à consulta inicial</button><button data-cancel type="button" style="width:100%;padding:7px;margin-top:6px;cursor:pointer">Parar automação</button><p data-status role="status" aria-live="polite" style="font-size:12px;line-height:1.45;margin:12px 0 0"></p></div>`;
     doc.body.append(panel);
     if (state && !state.clearTitle) panel.querySelector('[data-title]').value = formatTitle(state.title);
     panel.querySelector('[data-title]').addEventListener('input', formatTitleInput);
