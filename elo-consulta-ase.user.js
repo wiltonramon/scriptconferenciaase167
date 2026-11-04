@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.7
+// @version      1.5.8
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -335,6 +335,16 @@
     monitors.clear();
   }
 
+  function fixHistoryBackButton(doc) {
+    if (!doc.querySelector('a[name="btn_voltar"] img[name="img_btn_voltar"]')
+      || doc.querySelector('style[data-elo-ase-back-fix]')) return;
+    // A tabela do ELO usa position:absolute e z-index:2, cobrindo o botão nativo.
+    const style = doc.createElement('style');
+    style.setAttribute('data-elo-ase-back-fix', '');
+    style.textContent = 'a[name="btn_voltar"] img[name="img_btn_voltar"] { position:relative; z-index:3; }';
+    (doc.head || doc.documentElement).append(style);
+  }
+
   function collect() {
     const views = [];
     function visit(win, depth) {
@@ -349,12 +359,14 @@
       const aseLinks = links.filter(a => /^\s*ConsultaHistoricoFase\s*\(/.test(a.getAttribute('onclick') || ''));
       // Verifica a existência de ASE antes de filtrar links disponíveis para clique.
       const ase = aseLinks.find(a => (!state || callTitle(a, 1) === state.title) && visible(a));
+      const historyTitle = loadedHistoryTitle(doc);
+      if (historyTitle) fixHistoryBackButton(doc);
       views.push({win, doc, input:doc.querySelector('#num_inscricao_cpf'),
         consult:doc.querySelector('input[name="btn_consultar"]'),
         result:firstResult ? {node:firstResult, title:callTitle(firstResult, 0)} : null,
         ase:ase ? {node:ase, title:callTitle(ase, 1)} : null,
         noAseTitle:state?.phase === 'detail' ? missingAseTitle(doc, aseLinks) : null,
-        historyTitle:loadedHistoryTitle(doc)});
+        historyTitle});
       for (const frame of doc.querySelectorAll('frame,iframe')) {
         if (frame.contentWindow) visit(frame.contentWindow, depth + 1);
       }
