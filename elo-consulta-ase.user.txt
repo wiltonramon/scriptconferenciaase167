@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.14
+// @version      1.5.15
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -207,28 +207,30 @@
   }
 
   function turnReport(title, found, name = '', absenceFound) {
+    const heading = `ELEITOR: ${name}\nTÍTULO: ${formatTitle(title)}`;
     const absence = absenceFound === undefined ? '' : absenceReport(absenceFound);
-    const prefix = (name ? `Eleitor: ${name}\n` : '') + `Título ${formatTitle(title)}\n`
-      + (absence ? `\n${absence}\n\n` : '');
-    const code = CONFIG.aseCode;
-    const turns = CONFIG.turns;
-    if (!found) return prefix + 'Não foi possível identificar a tabela do histórico ASE. Confira manualmente os registros dos turnos.';
-    const present = turns.filter((_, index) => found[index]);
-    const missing = turns.filter((_, index) => !found[index]);
-    // Só recomenda o 167 ausente quando o 094 INATIVO foi confirmado na mesma data.
-    const recommended = turns.filter((_, index) => !found[index] && absenceFound?.[index]);
-    const guidance = !recommended.length ? '' : recommended.length === 1
-      ? `\nSe for o caso, lance manualmente o ASE ${code} do ${recommended[0].label}.`
-      : `\nSe for o caso, lance manualmente o ASE ${code} dos turnos: ${recommended.map(turn => turn.label).join(', ')}.`;
-    if (!missing.length) {
-      return prefix + `ASE ${code} encontrado ${turns.length === 2 ? 'nos dois turnos' : 'em todos os turnos'}.\n`
-        + present.map(turn => `${turn.label}: ${turn.date}`).join('\n');
+    if (!found) {
+      return heading + '\nNão foi possível identificar a tabela do histórico ASE. Confira manualmente os registros dos turnos.'
+        + (absence ? `\n${absence}` : '');
     }
-    if (!present.length) {
-      return prefix + `Não foi encontrado ASE ${code} para os turnos de ${missing.map(turn => turn.date).join(' e ')}.` + guidance;
-    }
-    const describe = turn => `${turn.label} (${turn.date})`;
-    return prefix + `ASE ${code} encontrado em: ${present.map(describe).join(', ')}.\nNão encontrado em: ${missing.map(describe).join(', ')}.` + guidance;
+    const sections = CONFIG.turns.map((turn, index) => {
+      const label = turn.label.replace(/turno/gi, 'Turno');
+      const lines = [];
+      if (absenceFound?.[index]) {
+        lines.push(`ASE ${CONFIG.absenceAseCode} encontrado em: ${label} (${turn.date}).`);
+      }
+      if (found[index]) {
+        lines.push(`ASE ${CONFIG.aseCode} registrado para o ${label}.`);
+      } else if (absenceFound?.[index]) {
+        lines.push(`ASE ${CONFIG.aseCode} não registrado para o ${label}.`);
+        lines.push(`Registre o ASE ${CONFIG.aseCode} para o ${label}.`);
+      } else if (!absenceFound) {
+        lines.push(`ASE ${CONFIG.aseCode} não registrado para o ${label}.`);
+      }
+      return lines.join('\n');
+    });
+    if (absence) sections.push(absence);
+    return heading + '\n' + sections.filter(Boolean).join('\n\n');
   }
 
   function verifyHistory(views) {
@@ -830,8 +832,11 @@
         return;
       }
       if (action.kind === 'noase') {
-        finish(`Não foi encontrado nenhum ASE para o eleitor consultado (título ${formatTitle(state.title)}).\n`
-          + absenceReport(CONFIG.turns.map(() => false)), true);
+        const empty = CONFIG.turns.map(() => false);
+        const detail = views.find(view => view.noAseTitle === state.title);
+        const name = detail ? electorName(detail.doc, state.title) : '';
+        finish(turnReport(state.title, empty, name, empty), true,
+          turnReport(state.title, empty, '', empty));
         return;
       }
       // Busca um elemento atual e valida de novo antes de acionar o evento nativo.
