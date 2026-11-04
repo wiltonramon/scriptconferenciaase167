@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.12
+// @version      1.5.13
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -20,6 +20,7 @@
   // Ajuste aqui a cada eleição: código do ASE e datas dos turnos.
   const CONFIG = Object.freeze({
     aseCode: '167',
+    absenceAseCode: '094',
     turns: Object.freeze([
       Object.freeze({label:'1º turno', date:'04/10/2026'}),
       Object.freeze({label:'2º turno', date:'25/10/2026'})
@@ -160,7 +161,7 @@
     return electorTitle(Array.from(doc.querySelectorAll('td')));
   }
 
-  function readTurnASEs(doc) {
+  function readTurnASEs(doc, code = CONFIG.aseCode, requiredStatus = '') {
     // Cada código e data precisam estar na mesma linha da tabela de histórico.
     const rows = Array.from(doc.querySelectorAll('tr'));
     const header = rows.find(row => {
@@ -171,11 +172,15 @@
     const names = Array.from(header.cells, cell => cell.textContent.trim());
     const codeColumn = names.indexOf('ASE');
     const occurrenceColumn = names.indexOf('Ocorrência');
+    const statusColumn = names.indexOf('Situação');
+    // Uma coluna não reconhecida não equivale à ausência de registro.
+    if (requiredStatus && statusColumn < 0) return null;
     const table = header.closest('table');
     if (!table) return null;
     const found = CONFIG.turns.map(() => false);
     for (const row of Array.from(table.rows)) {
-      if (row.cells[codeColumn]?.textContent.trim() !== CONFIG.aseCode) continue;
+      if (row.cells[codeColumn]?.textContent.trim().padStart(3, '0') !== code.padStart(3, '0')) continue;
+      if (requiredStatus && row.cells[statusColumn]?.textContent.replace(/\s+/g, ' ').trim().toUpperCase() !== requiredStatus) continue;
       const date = row.cells[occurrenceColumn]?.textContent.replace(/\s+/g, ' ').trim();
       const index = CONFIG.turns.findIndex(turn => turn.date === date);
       if (index >= 0) found[index] = true;
@@ -195,8 +200,16 @@
     return '';
   }
 
-  function turnReport(title, found, name = '') {
-    const prefix = (name ? `Eleitor: ${name}\n` : '') + `Título ${formatTitle(title)}\n`;
+  function absenceReport(found) {
+    if (!found) return `Não foi possível conferir o ASE ${CONFIG.absenceAseCode} INATIVO. Confira manualmente a situação dos registros no ELO.`;
+    return CONFIG.turns.filter((_, index) => !found[index])
+      .map(turn => `O eleitor não teve ausência registrada no ${turn.label} (${turn.date}).`).join('\n');
+  }
+
+  function turnReport(title, found, name = '', absenceFound) {
+    const absence = absenceFound === undefined ? '' : absenceReport(absenceFound);
+    const prefix = (name ? `Eleitor: ${name}\n` : '') + `Título ${formatTitle(title)}\n`
+      + (absence ? `\n${absence}\n\n` : '');
     const code = CONFIG.aseCode;
     const turns = CONFIG.turns;
     if (!found) return prefix + 'Não foi possível identificar a tabela do histórico ASE. Confira manualmente os registros dos turnos.';
@@ -235,8 +248,9 @@
         return 'waiting';
       }
     }
-    const message = turnReport(history.historyTitle, found, electorName(history.doc, history.historyTitle));
-    const complete = Boolean(found && found.every(Boolean));
+    const absenceFound = readTurnASEs(history.doc, CONFIG.absenceAseCode, 'INATIVO');
+    const message = turnReport(history.historyTitle, found, electorName(history.doc, history.historyTitle), absenceFound);
+    const complete = Boolean(found && found.every(Boolean) && absenceFound && absenceFound.every(Boolean));
     const input = panel?.querySelector('[data-title]');
     // Preserva outro título que já esteja sendo preparado para a próxima consulta.
     const clearInput = Boolean(found?.some(Boolean)) && (!input || !input.value.trim()
@@ -244,7 +258,7 @@
     const saveCleared = clearInput && state?.title === history.historyTitle && !state.clearTitle;
     if (saveCleared) state.clearTitle = true;
     // O nome do eleitor aparece só na tela; o que fica salvo na sessão não o contém.
-    if (busy()) finish(message, false, turnReport(history.historyTitle, found));
+    if (busy()) finish(message, false, turnReport(history.historyTitle, found, '', absenceFound));
     else {
       setStatus(message);
       if (saveCleared) store();
@@ -814,7 +828,9 @@
         return;
       }
       if (action.kind === 'noase') {
-        finish(`Não foi encontrado nenhum ASE para o eleitor consultado (título ${formatTitle(state.title)}).\nSe for o caso, lance manualmente o ASE ${CONFIG.aseCode} dos turnos correspondentes.`, true);
+        finish(`Não foi encontrado nenhum ASE para o eleitor consultado (título ${formatTitle(state.title)}).\n`
+          + absenceReport(CONFIG.turns.map(() => false))
+          + `\nSe for o caso, lance manualmente o ASE ${CONFIG.aseCode} dos turnos correspondentes.`, true);
         return;
       }
       // Busca um elemento atual e valida de novo antes de acionar o evento nativo.
