@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.11
+// @version      1.5.12
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -511,11 +511,13 @@
     const views = collect();
     if (!queryReady(view) || !navigationReady(views)) {
       // O body.onload do ELO inicializa e limpa o formulário. Aguarda antes de preencher.
-      if (state?.phase !== 'query' || state.title !== title) {
+      const changed = state?.phase !== 'query' || state.title !== title;
+      if (changed) {
         state = {phase:'query', title, updated:Date.now()};
       }
       try {
-        store();
+        // O estado já salvo não muda durante as retentativas de carregamento.
+        if (changed) store();
         setStatus('Aguardando o ELO concluir o carregamento interno para consultar…');
         updateButtons();
         refreshActivity();
