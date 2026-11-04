@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.4
+// @version      1.5.5
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -55,7 +55,8 @@
   }
 
   function formatTitle(value) {
-    return String(value ?? '').replace(/\D/g, '').slice(0, 12).replace(/(\d{4})(?=\d)/g, '$1 ');
+    // Preserva dígitos excedentes para que a validação recuse o número inteiro.
+    return String(value ?? '').replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ');
   }
 
   function isValidTitle(value) {
@@ -218,7 +219,8 @@
     // Retorna true quando relatou o histórico, 'waiting' quando aguarda a tabela e false quando não havia o que fazer.
     const history = views.find(view => view.doc && view.historyTitle
       && (!busy() || (state.phase === 'history' && state.title === view.historyTitle)));
-    if (!history || checkedHistories.get(history.doc) === history.historyTitle) return false;
+    // O cache evita avisos repetidos em repouso, mas não substitui uma nova consulta.
+    if (!history || (!busy() && checkedHistories.get(history.doc) === history.historyTitle)) return false;
     const found = readTurnASEs(history.doc);
     if (!found || !found.every(Boolean)) {
       // O cabeçalho pode surgir antes das linhas. Só conclui ausência após a espera.
@@ -430,7 +432,7 @@
     const input = panel.querySelector('[data-title]');
     const valid = isValidTitle(input.value);
     const length = input.value.replace(/\D/g, '').length;
-    const invalid = length === 12 && !valid;
+    const invalid = length >= 12 && !valid;
     const feedback = panel.querySelector('[data-title-feedback]');
     const message = !length ? 'Digite os 12 dígitos do título.'
       : length < 12 ? `Complete o título: faltam ${12 - length} dígito(s).`
@@ -616,6 +618,10 @@
       || views.find(v => v.doc.body?.tagName === 'BODY');
     if (!host) return;
     if (panel?.isConnected && panel.ownerDocument === host.doc) return;
+    // Mantém a edição em andamento quando o ELO substitui o quadro do painel.
+    const previousInput = panel?.querySelector('[data-title]');
+    const draft = previousInput ? previousInput.value
+      : state && !state.clearTitle ? formatTitle(state.title) : '';
     panel?.remove();
     const doc = host.doc;
     panel = doc.createElement('section');
@@ -625,7 +631,7 @@
     panel.innerHTML = `<div data-handle style="background:#174975;color:white;padding:12px 14px;cursor:move;touch-action:none;font-weight:bold;display:flex;justify-content:space-between;align-items:center">Consulta rápida ASE<button type="button" data-collapse aria-label="Recolher painel" style="background:transparent;color:white;border:0;font-size:20px;cursor:pointer">−</button></div>
       <div data-body style="padding:14px"><form data-form><label style="display:block;margin-bottom:7px" for="elo-ase-titulo">Título de eleitor</label><div style="position:relative"><input id="elo-ase-titulo" aria-describedby="elo-ase-titulo-feedback" data-title type="text" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="0000 0000 0000" style="box-sizing:border-box;width:100%;font:18px Arial;padding:9px 38px 9px 9px;border:1px solid #a6b6c5;border-radius:5px"><button data-clear-title type="button" aria-label="Limpar título" title="Limpar título (Esc)" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:30px;height:30px;padding:0;border:0;border-radius:4px;background:transparent;color:#526577;font:20px Arial,sans-serif;cursor:pointer">×</button></div><p id="elo-ase-titulo-feedback" data-title-feedback aria-live="polite" style="font-size:12px;line-height:1.4;margin:6px 0 0;color:#526577">Digite os 12 dígitos do título.</p><button disabled data-submit type="submit" style="width:100%;padding:10px;margin-top:10px;border:0;border-radius:5px;background:#174975;color:white;font-weight:bold;cursor:pointer">Consultar ASE</button></form><button data-return type="button" style="width:100%;padding:9px;margin-top:8px;cursor:pointer">Voltar à consulta inicial</button><button data-cancel type="button" style="width:100%;padding:7px;margin-top:6px;cursor:pointer">Parar automação</button><p data-status role="status" aria-live="polite" style="font-size:12px;line-height:1.45;margin:12px 0 0"></p></div>`;
     doc.body.append(panel);
-    if (state && !state.clearTitle) panel.querySelector('[data-title]').value = formatTitle(state.title);
+    panel.querySelector('[data-title]').value = draft;
     panel.querySelector('[data-title]').addEventListener('input', formatTitleInput);
     panel.querySelector('[data-title]').addEventListener('keydown', event => {
       if (event.key !== 'Escape' || event.isComposing) return;
@@ -682,9 +688,10 @@
     if (doc.readyState !== 'complete') return false;
     // Evita confundir mensagens do painel, alertas antigos ou textos de outros campos.
     return Array.from(doc.querySelectorAll('td,p,div,span,[role="alert"]')).some(node => {
-      if (node.closest('#' + PANEL + ',[data-elo-ase-popover]') || !visible(node)) return false;
+      if (node.closest('#' + PANEL + ',[data-elo-ase-popover]')) return false;
       const text = node.textContent.replace(/\s+/g, ' ').trim();
-      return CONFIG.noResultPattern.test(text);
+      // Consulta estilos e dimensões apenas quando o texto pode ser a mensagem esperada.
+      return CONFIG.noResultPattern.test(text) && visible(node);
     });
   }
 
@@ -782,4 +789,3 @@
   }
   boot();
 })();
-
