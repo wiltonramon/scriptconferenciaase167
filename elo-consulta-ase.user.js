@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.22
+// @version      1.5.23
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -229,7 +229,7 @@
         lines.push(`ASE ${CONFIG.aseCode} registrado para o ${label}.`);
       } else if (absenceFound?.[index]) {
         lines.push(`ASE ${CONFIG.aseCode} não encontrado para o ${label} (${turn.date}).`);
-        lines.push(`Registre o ASE ${CONFIG.aseCode} para o ${label}.`);
+        lines.push(`Registre o ASE ${CONFIG.aseCode} para o ${label}, caso seja necessário.`);
       } else if (!absenceFound) {
         lines.push(`ASE ${CONFIG.aseCode} não encontrado para o ${label} (${turn.date}).`);
       }
