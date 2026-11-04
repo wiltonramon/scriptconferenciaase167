@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.3
+// @version      1.5.4
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -584,7 +584,7 @@
     setStatus(message);
     if (noAse) {
       setCollapsed(false);
-      showPopover(message, panel?.ownerDocument);
+      showPopover(message, panel?.ownerDocument, 10000);
     }
     updateButtons();
   }
