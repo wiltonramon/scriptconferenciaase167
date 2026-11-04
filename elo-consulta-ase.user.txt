@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.9
+// @version      1.5.10
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -633,6 +633,16 @@
     focusTitleInput();
   }
 
+  function isolatePanelEvents(element) {
+    // Os tratadores globais legados do ELO não conhecem os controles deste painel.
+    // Interrompe só a propagação: digitação, foco e envio por Enter continuam nativos.
+    for (const type of ['keydown', 'keypress', 'keyup', 'click', 'dblclick',
+      'mousedown', 'mouseup', 'mouseover', 'mouseout', 'input', 'change',
+      'focusin', 'focusout', 'submit']) {
+      element.addEventListener(type, event => event.stopPropagation());
+    }
+  }
+
   function mount(views) {
     const host = views.find(v => v.win.name === 'principal' && v.doc.body?.tagName === 'BODY')
       || views.find(v => v.doc.body?.tagName === 'BODY' && (v.input || v.result || v.ase))
@@ -651,6 +661,7 @@
     panel.style.cssText = 'position:fixed;top:80px;right:20px;width:292px;max-width:calc(100vw - 24px);z-index:2147483647;background:#fff;color:#182333;border:1px solid #b7c6d5;border-radius:10px;box-shadow:0 5px 24px #0003;font:14px Arial,sans-serif;box-sizing:border-box;overflow:hidden;text-align:left';
     panel.innerHTML = `<div data-handle style="background:#174975;color:white;padding:12px 14px;cursor:move;touch-action:none;font-weight:bold;display:flex;justify-content:space-between;align-items:center">Consulta rápida ASE<button type="button" data-collapse aria-label="Recolher painel" style="background:transparent;color:white;border:0;font-size:20px;cursor:pointer">−</button></div>
       <div data-body style="padding:14px"><form data-form><label style="display:block;margin-bottom:7px" for="elo-ase-titulo">Título de eleitor</label><div style="position:relative"><input id="elo-ase-titulo" aria-describedby="elo-ase-titulo-feedback" data-title type="text" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="0000 0000 0000" style="box-sizing:border-box;width:100%;font:18px Arial;padding:9px 38px 9px 9px;border:1px solid #a6b6c5;border-radius:5px"><button data-clear-title type="button" aria-label="Limpar título" title="Limpar título (Esc)" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:30px;height:30px;padding:0;border:0;border-radius:4px;background:transparent;color:#526577;font:20px Arial,sans-serif;cursor:pointer">×</button></div><p id="elo-ase-titulo-feedback" data-title-feedback aria-live="polite" style="font-size:12px;line-height:1.4;margin:6px 0 0;color:#526577">Digite os 12 dígitos do título.</p><button disabled data-submit type="submit" style="width:100%;padding:10px;margin-top:10px;border:0;border-radius:5px;background:#174975;color:white;font-weight:bold;cursor:pointer">Consultar ASE</button></form><button data-return type="button" style="width:100%;padding:9px;margin-top:8px;cursor:pointer">Voltar à consulta inicial</button><button data-cancel type="button" style="width:100%;padding:7px;margin-top:6px;cursor:pointer">Parar automação</button><p data-status role="status" aria-live="polite" style="font-size:12px;line-height:1.45;margin:12px 0 0"></p></div>`;
+    isolatePanelEvents(panel);
     doc.body.append(panel);
     panel.querySelector('[data-title]').value = draft;
     panel.querySelector('[data-title]').addEventListener('input', formatTitleInput);
