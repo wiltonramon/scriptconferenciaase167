@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.8
+// @version      1.5.9
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -360,7 +360,6 @@
       // Verifica a existência de ASE antes de filtrar links disponíveis para clique.
       const ase = aseLinks.find(a => (!state || callTitle(a, 1) === state.title) && visible(a));
       const historyTitle = loadedHistoryTitle(doc);
-      if (historyTitle) fixHistoryBackButton(doc);
       views.push({win, doc, input:doc.querySelector('#num_inscricao_cpf'),
         consult:doc.querySelector('input[name="btn_consultar"]'),
         result:firstResult ? {node:firstResult, title:callTitle(firstResult, 0)} : null,
@@ -757,6 +756,12 @@
         try { store(); } catch { setStatus('O navegador precisa permitir armazenamento da sessão para a automação.'); }
       }
       mount(views);
+      // O ajuste visual do ELO nunca deve impedir a montagem ou a automação.
+      for (const view of views) {
+        if (!view.historyTitle) continue;
+        try { fixHistoryBackButton(view.doc); }
+        catch (error) { console.warn('[ELO ASE] Não foi possível ajustar a posição do botão Voltar.', error); }
+      }
       if (focusAfterLoad?.readyState === 'complete' && panel?.ownerDocument === focusAfterLoad) {
         focusTitleInput(); focusAfterLoad = null;
       }
