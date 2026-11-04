@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.13
+// @version      1.5.14
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -215,18 +215,20 @@
     if (!found) return prefix + 'Não foi possível identificar a tabela do histórico ASE. Confira manualmente os registros dos turnos.';
     const present = turns.filter((_, index) => found[index]);
     const missing = turns.filter((_, index) => !found[index]);
+    // Só recomenda o 167 ausente quando o 094 INATIVO foi confirmado na mesma data.
+    const recommended = turns.filter((_, index) => !found[index] && absenceFound?.[index]);
+    const guidance = !recommended.length ? '' : recommended.length === 1
+      ? `\nSe for o caso, lance manualmente o ASE ${code} do ${recommended[0].label}.`
+      : `\nSe for o caso, lance manualmente o ASE ${code} dos turnos: ${recommended.map(turn => turn.label).join(', ')}.`;
     if (!missing.length) {
       return prefix + `ASE ${code} encontrado ${turns.length === 2 ? 'nos dois turnos' : 'em todos os turnos'}.\n`
         + present.map(turn => `${turn.label}: ${turn.date}`).join('\n');
     }
     if (!present.length) {
-      return prefix + `Não foi encontrado ASE ${code} para os turnos de ${missing.map(turn => turn.date).join(' e ')}.\nSe for o caso, lance manualmente o ASE ${code} de todos os turnos.`;
+      return prefix + `Não foi encontrado ASE ${code} para os turnos de ${missing.map(turn => turn.date).join(' e ')}.` + guidance;
     }
     const describe = turn => `${turn.label} (${turn.date})`;
-    return prefix + `ASE ${code} encontrado em: ${present.map(describe).join(', ')}.\nNão encontrado em: ${missing.map(describe).join(', ')}.\n`
-      + (missing.length === 1
-        ? `Se for o caso, lance manualmente o ASE ${code} do ${missing[0].label}.`
-        : `Se for o caso, lance manualmente o ASE ${code} dos turnos: ${missing.map(turn => turn.label).join(', ')}.`);
+    return prefix + `ASE ${code} encontrado em: ${present.map(describe).join(', ')}.\nNão encontrado em: ${missing.map(describe).join(', ')}.` + guidance;
   }
 
   function verifyHistory(views) {
@@ -829,8 +831,7 @@
       }
       if (action.kind === 'noase') {
         finish(`Não foi encontrado nenhum ASE para o eleitor consultado (título ${formatTitle(state.title)}).\n`
-          + absenceReport(CONFIG.turns.map(() => false))
-          + `\nSe for o caso, lance manualmente o ASE ${CONFIG.aseCode} dos turnos correspondentes.`, true);
+          + absenceReport(CONFIG.turns.map(() => false)), true);
         return;
       }
       // Busca um elemento atual e valida de novo antes de acionar o evento nativo.
