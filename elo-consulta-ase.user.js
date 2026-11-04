@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.18
+// @version      1.5.19
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -173,14 +173,15 @@
     const codeColumn = names.indexOf('ASE');
     const occurrenceColumn = names.indexOf('Ocorrência');
     const statusColumn = names.indexOf('Situação');
+    const acceptedStatuses = Array.isArray(requiredStatus) ? requiredStatus : requiredStatus ? [requiredStatus] : [];
     // Uma coluna não reconhecida não equivale à ausência de registro.
-    if (requiredStatus && statusColumn < 0) return null;
+    if (acceptedStatuses.length && statusColumn < 0) return null;
     const table = header.closest('table');
     if (!table) return null;
     const found = CONFIG.turns.map(() => false);
     for (const row of Array.from(table.rows)) {
       if (row.cells[codeColumn]?.textContent.trim().padStart(3, '0') !== code.padStart(3, '0')) continue;
-      if (requiredStatus && row.cells[statusColumn]?.textContent.replace(/\s+/g, ' ').trim().toUpperCase() !== requiredStatus) continue;
+      if (acceptedStatuses.length && !acceptedStatuses.includes(row.cells[statusColumn]?.textContent.replace(/\s+/g, ' ').trim().toUpperCase())) continue;
       const date = row.cells[occurrenceColumn]?.textContent.replace(/\s+/g, ' ').trim();
       const index = CONFIG.turns.findIndex(turn => turn.date === date);
       if (index >= 0) found[index] = true;
@@ -201,7 +202,7 @@
   }
 
   function absenceReport(found) {
-    if (!found) return `Não foi possível conferir o ASE ${CONFIG.absenceAseCode} INATIVO. Confira manualmente a situação dos registros no ELO.`;
+    if (!found) return `Não foi possível conferir o ASE ${CONFIG.absenceAseCode}. Confira manualmente a situação dos registros no ELO.`;
     return CONFIG.turns.filter((_, index) => !found[index])
       .map(turn => `O eleitor não teve ausência registrada no ${turn.label} (${turn.date}).`).join('\n');
   }
@@ -252,9 +253,9 @@
         return 'waiting';
       }
     }
-    const absenceFound = readTurnASEs(history.doc, CONFIG.absenceAseCode, 'INATIVO');
+    const absenceFound = readTurnASEs(history.doc, CONFIG.absenceAseCode, ['ATIVO', 'INATIVO']);
     const message = turnReport(history.historyTitle, found, electorName(history.doc, history.historyTitle), absenceFound);
-    // Uma pendência exige 094 INATIVO e ausência de 167 na mesma data.
+    // Uma pendência exige 094 ATIVO/INATIVO e ausência de 167 na mesma data.
     const pending = Boolean(found && absenceFound?.some((absence, index) => absence && !found[index]));
     const tone = !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
     const input = panel?.querySelector('[data-title]');
