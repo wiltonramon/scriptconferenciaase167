@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.20
+// @version      1.5.21
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -210,9 +210,9 @@
   function turnReport(title, found, name = '', absenceFound) {
     const heading = `ELEITOR: ${name}\nTÍTULO: ${formatTitle(title)}`;
     if (found?.every(Boolean)) {
-      const registered = CONFIG.turns.map(turn =>
-        `ASE ${CONFIG.aseCode} registrado no ${turn.label.replace(/turno/gi, 'Turno')} (${turn.date}).`).join('\n');
-      return `${heading}\n\n${registered}\n\nNão há lançamentos a serem feitos.`;
+      const dates = CONFIG.turns.map(turn =>
+        `${turn.label.replace(/turno/gi, 'Turno')}: (${turn.date})`).join('\n');
+      return `${heading}\nASE ${CONFIG.aseCode} encontrado ${CONFIG.turns.length === 2 ? 'nos dois turnos' : 'em todos os turnos'}.\n${dates}\nNão há lançamentos a serem feitos.`;
     }
     const absence = absenceFound === undefined ? '' : absenceReport(absenceFound);
     if (!found) {
