@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.6
+// @version      1.5.7
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -39,6 +39,7 @@
   let running = false;
   let timer = null;
   let pendingTick = null;
+  let pendingTickDue = 0;
   let focusAfterLoad = null;
   let suspended = false;
   const monitors = new Map();
@@ -222,8 +223,8 @@
     // O cache evita avisos repetidos em repouso, mas não substitui uma nova consulta.
     if (!history || (!busy() && checkedHistories.get(history.doc) === history.historyTitle)) return false;
     const found = readTurnASEs(history.doc);
-    if (!found || !found.every(Boolean)) {
-      // O cabeçalho pode surgir antes das linhas. Só conclui ausência após a espera.
+    if (!found) {
+      // O documento já terminou de carregar. Só aguarda se a tabela ainda não existe.
       let waiting = historyWaits.get(history.doc);
       if (!waiting || waiting.title !== history.historyTitle) {
         waiting = {title:history.historyTitle, since:Date.now()};
@@ -266,8 +267,17 @@
   }
 
   function scheduleTick(delay = 0) {
-    if (suspended || pendingTick !== null) return;
-    pendingTick = window.setTimeout(() => { pendingTick = null; tick(); }, delay);
+    if (suspended) return;
+    const due = Date.now() + delay;
+    if (pendingTick !== null) {
+      // Um evento de carregamento não deve ficar atrás de uma retentativa atrasada.
+      if (due >= pendingTickDue) return;
+      window.clearTimeout(pendingTick);
+    }
+    pendingTickDue = due;
+    pendingTick = window.setTimeout(() => {
+      pendingTick = null; pendingTickDue = 0; tick();
+    }, delay);
   }
 
   function ownMutation(record) {
@@ -320,7 +330,7 @@
   function cleanupMonitoring() {
     if (timer !== null) window.clearInterval(timer);
     if (pendingTick !== null) window.clearTimeout(pendingTick);
-    timer = null; pendingTick = null; focusAfterLoad = null;
+    timer = null; pendingTick = null; pendingTickDue = 0; focusAfterLoad = null;
     for (const [doc, monitor] of monitors) detachMonitor(doc, monitor);
     monitors.clear();
   }
