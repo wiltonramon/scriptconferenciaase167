@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.15
+// @version      1.5.16
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -254,7 +254,8 @@
     }
     const absenceFound = readTurnASEs(history.doc, CONFIG.absenceAseCode, 'INATIVO');
     const message = turnReport(history.historyTitle, found, electorName(history.doc, history.historyTitle), absenceFound);
-    const complete = Boolean(found && found.every(Boolean) && absenceFound && absenceFound.every(Boolean));
+    const positive = Boolean(found && (found.every(Boolean)
+      || absenceFound?.some((present, index) => present && !found[index])));
     const input = panel?.querySelector('[data-title]');
     // Preserva outro título que já esteja sendo preparado para a próxima consulta.
     const clearInput = Boolean(found?.some(Boolean)) && (!input || !input.value.trim()
@@ -267,7 +268,7 @@
       setStatus(message);
       if (saveCleared) store();
     }
-    showPopover(message, history.doc, 10000, complete ? 'success' : 'warning');
+    showPopover(message, history.doc, 10000, positive ? 'success' : 'warning');
     // Marca a leitura após concluir a atualização do aviso.
     checkedHistories.set(history.doc, history.historyTitle);
     historyWaits.delete(history.doc);
