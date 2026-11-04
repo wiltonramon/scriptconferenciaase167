@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.1
+// @version      1.5.2
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -556,6 +556,18 @@
     }
   }
 
+  function clearTitleInput() {
+    const input = panel?.querySelector('[data-title]');
+    if (!input) return;
+    input.value = '';
+    // Evita restaurar o título apagado quando o painel for recriado.
+    if (state && !state.clearTitle) {
+      state.clearTitle = true;
+      try { store(); } catch { /* A limpeza do campo continua disponível. */ }
+    }
+    focusTitleInput();
+  }
+
   function mount(views) {
     const host = views.find(v => v.win.name === 'principal' && v.doc.body?.tagName === 'BODY')
       || views.find(v => v.doc.body?.tagName === 'BODY' && (v.input || v.result || v.ase))
@@ -569,10 +581,17 @@
     panel.setAttribute('aria-label', 'Consulta rápida ASE');
     panel.style.cssText = 'position:fixed;top:80px;right:20px;width:292px;max-width:calc(100vw - 24px);z-index:2147483647;background:#fff;color:#182333;border:1px solid #b7c6d5;border-radius:10px;box-shadow:0 5px 24px #0003;font:14px Arial,sans-serif;box-sizing:border-box;overflow:hidden;text-align:left';
     panel.innerHTML = `<div data-handle style="background:#174975;color:white;padding:12px 14px;cursor:move;touch-action:none;font-weight:bold;display:flex;justify-content:space-between;align-items:center">Consulta rápida ASE<button type="button" data-collapse aria-label="Recolher painel" style="background:transparent;color:white;border:0;font-size:20px;cursor:pointer">−</button></div>
-      <div data-body style="padding:14px"><form data-form><label style="display:block;margin-bottom:7px" for="elo-ase-titulo">Título de eleitor</label><input id="elo-ase-titulo" data-title type="text" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="0000 0000 0000" style="box-sizing:border-box;width:100%;font:18px Arial;padding:9px;border:1px solid #a6b6c5;border-radius:5px"><button data-submit type="submit" style="width:100%;padding:10px;margin-top:10px;border:0;border-radius:5px;background:#174975;color:white;font-weight:bold;cursor:pointer">Consultar ASE</button></form><button data-return type="button" style="width:100%;padding:9px;margin-top:8px;cursor:pointer">Voltar à consulta inicial</button><button data-cancel type="button" style="width:100%;padding:7px;margin-top:6px;cursor:pointer">Parar automação</button><p data-status role="status" aria-live="polite" style="font-size:12px;line-height:1.45;margin:12px 0 0"></p></div>`;
+      <div data-body style="padding:14px"><form data-form><label style="display:block;margin-bottom:7px" for="elo-ase-titulo">Título de eleitor</label><div style="position:relative"><input id="elo-ase-titulo" data-title type="text" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="0000 0000 0000" style="box-sizing:border-box;width:100%;font:18px Arial;padding:9px 38px 9px 9px;border:1px solid #a6b6c5;border-radius:5px"><button data-clear-title type="button" aria-label="Limpar título" title="Limpar título (Esc)" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:30px;height:30px;padding:0;border:0;border-radius:4px;background:transparent;color:#526577;font:20px Arial,sans-serif;cursor:pointer">×</button></div><button data-submit type="submit" style="width:100%;padding:10px;margin-top:10px;border:0;border-radius:5px;background:#174975;color:white;font-weight:bold;cursor:pointer">Consultar ASE</button></form><button data-return type="button" style="width:100%;padding:9px;margin-top:8px;cursor:pointer">Voltar à consulta inicial</button><button data-cancel type="button" style="width:100%;padding:7px;margin-top:6px;cursor:pointer">Parar automação</button><p data-status role="status" aria-live="polite" style="font-size:12px;line-height:1.45;margin:12px 0 0"></p></div>`;
     doc.body.append(panel);
     if (state && !state.clearTitle) panel.querySelector('[data-title]').value = formatTitle(state.title);
     panel.querySelector('[data-title]').addEventListener('input', formatTitleInput);
+    panel.querySelector('[data-title]').addEventListener('keydown', event => {
+      if (event.key !== 'Escape' || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      clearTitleInput();
+    });
+    panel.querySelector('[data-clear-title]').addEventListener('click', clearTitleInput);
     panel.querySelector('[data-status]').textContent = statusText;
     panel.querySelector('[data-form]').addEventListener('submit', start);
     panel.querySelector('[data-return]').addEventListener('click', returnHome);
@@ -721,3 +740,4 @@
   }
   boot();
 })();
+
