@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.16
+// @version      1.5.17
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -254,8 +254,8 @@
     }
     const absenceFound = readTurnASEs(history.doc, CONFIG.absenceAseCode, 'INATIVO');
     const message = turnReport(history.historyTitle, found, electorName(history.doc, history.historyTitle), absenceFound);
-    const positive = Boolean(found && (found.every(Boolean)
-      || absenceFound?.some((present, index) => present && !found[index])));
+    // Conferência concluída: verde, com ou sem necessidade de registrar o ASE 167.
+    const positive = Boolean(found && absenceFound);
     const input = panel?.querySelector('[data-title]');
     // Preserva outro título que já esteja sendo preparado para a próxima consulta.
     const clearInput = Boolean(found?.some(Boolean)) && (!input || !input.value.trim()
@@ -641,7 +641,7 @@
     setStatus(message);
     if (noAse) {
       setCollapsed(false);
-      showPopover(message, panel?.ownerDocument, 10000);
+      showPopover(message, panel?.ownerDocument, 10000, 'success');
     }
     updateButtons();
   }
