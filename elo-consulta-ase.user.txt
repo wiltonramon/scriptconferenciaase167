@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.23
+// @version      1.5.28
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -201,18 +201,22 @@
     return '';
   }
 
-  function absenceReport(found) {
-    if (!found) return `Não foi possível conferir o ASE ${CONFIG.absenceAseCode}. Confira manualmente a situação dos registros no ELO.`;
-    return CONFIG.turns.filter((_, index) => !found[index])
-      .map(turn => `O eleitor não teve ausência registrada no ${turn.label} (${turn.date}).`).join('\n');
+  function turnLabel(turn) {
+    // Mesma grafia ("1º Turno") em todas as mensagens.
+    return turn.label.replace(/turno/gi, 'Turno');
+  }
+
+  function absenceReport(absenceFound) {
+    if (!absenceFound) return `Não foi possível conferir o ASE ${CONFIG.absenceAseCode}. Confira manualmente a situação dos registros no ELO.`;
+    return CONFIG.turns.filter((_, index) => !absenceFound[index])
+      .map(turn => `Não há ausência (ASE ${CONFIG.absenceAseCode}) registrada no ${turnLabel(turn)} (${turn.date}).`).join('\n');
   }
 
   function turnReport(title, found, name = '', absenceFound) {
-    const heading = `ELEITOR: ${name}\nTÍTULO: ${formatTitle(title)}`;
+    const heading = `ELEITOR(A): ${name.trim() || 'nome não identificado'}\nTÍTULO: ${formatTitle(title)}`;
     if (found?.every(Boolean)) {
-      const dates = CONFIG.turns.map(turn =>
-        `${turn.label.replace(/turno/gi, 'Turno')}: (${turn.date})`).join('\n');
-      return `${heading}\nASE ${CONFIG.aseCode} encontrado ${CONFIG.turns.length === 2 ? 'nos dois turnos' : 'em todos os turnos'}.\n${dates}\nNão há lançamentos a serem feitos.`;
+      const dates = CONFIG.turns.map(turn => `${turnLabel(turn)} (${turn.date})`).join('\n');
+      return `${heading}\nASE ${CONFIG.aseCode} registrado ${CONFIG.turns.length === 2 ? 'nos dois turnos' : 'em todos os turnos'}.\n${dates}\nNão há registros a serem feitos.`;
     }
     const absence = absenceFound === undefined ? '' : absenceReport(absenceFound);
     if (!found) {
@@ -220,18 +224,18 @@
         + (absence ? `\n${absence}` : '');
     }
     const sections = CONFIG.turns.map((turn, index) => {
-      const label = turn.label.replace(/turno/gi, 'Turno');
+      const label = turnLabel(turn);
       const lines = [];
       if (absenceFound?.[index]) {
-        lines.push(`ASE ${CONFIG.absenceAseCode} encontrado em: ${label} (${turn.date}).`);
+        lines.push(`ASE ${CONFIG.absenceAseCode} encontrado no ${label} (${turn.date}).`);
       }
       if (found[index]) {
-        lines.push(`ASE ${CONFIG.aseCode} registrado para o ${label}.`);
+        lines.push(`ASE ${CONFIG.aseCode} registrado no ${label} (${turn.date}).`);
       } else if (absenceFound?.[index]) {
-        lines.push(`ASE ${CONFIG.aseCode} não encontrado para o ${label} (${turn.date}).`);
-        lines.push(`Registre o ASE ${CONFIG.aseCode} para o ${label}, caso seja necessário.`);
+        lines.push(`ASE ${CONFIG.aseCode} não encontrado no ${label} (${turn.date}).`);
+        lines.push(`Registre o ASE ${CONFIG.aseCode} no ${label}, se for o caso.`);
       } else if (!absenceFound) {
-        lines.push(`ASE ${CONFIG.aseCode} não encontrado para o ${label} (${turn.date}).`);
+        lines.push(`ASE ${CONFIG.aseCode} não encontrado no ${label} (${turn.date}).`);
       }
       return lines.join('\n');
     });
@@ -494,7 +498,7 @@
     const invalid = length >= 12 && !valid;
     const feedback = panel.querySelector('[data-title-feedback]');
     const message = !length ? 'Digite os 12 dígitos do título.'
-      : length < 12 ? `Complete o título: faltam ${12 - length} dígito(s).`
+      : length < 12 ? `Complete o título: ${12 - length === 1 ? 'falta 1 dígito' : `faltam ${12 - length} dígitos`}.`
       : invalid ? 'Título inválido. Corrija os números para consultar.'
       : 'Dígitos verificadores válidos.';
     input.setAttribute('aria-invalid', String(invalid));
@@ -581,7 +585,7 @@
       if (alerts.length) { rejectQuery(title, alerts); return; }
       // A validação nativa pode cancelar ou corrigir a inscrição.
       if (view.input.value.replace(/\D/g, '') !== title) {
-        throw new Error('O ELO alterou ou limpou o título digitado. Confira os números e tente de novo.');
+        throw new Error('O ELO alterou ou limpou o título digitado. Confira os números e tente novamente.');
       }
       const inscription = view.input.form?.querySelector('input[name="num_inscricao"]');
       const cpf = view.input.form?.querySelector('input[name="num_cpf"]');
@@ -619,7 +623,7 @@
   }
 
   function rejectQuery(title, alerts) {
-    const reason = alerts.filter(Boolean).join(' ') || 'título recusado.';
+    const reason = alerts.filter(Boolean).join(' ') || 'motivo não informado.';
     const message = `O ELO recusou o título ${formatTitle(title)}: ${reason}`;
     stop(message);
     setCollapsed(false);
@@ -754,9 +758,9 @@
   }
 
   const TIMEOUT_MESSAGES = Object.freeze({
-    query: 'O formulário de consulta do ELO não ficou disponível. Volte à consulta inicial e tente de novo.',
-    results: 'O ELO não abriu o resultado da consulta a tempo. Confira o título e tente de novo.',
-    detail: 'O detalhe do eleitor não carregou, ou o link do ASE não foi reconhecido. Confira a tela do ELO.',
+    query: 'O formulário de consulta do ELO não ficou disponível. Volte à consulta inicial e tente novamente.',
+    results: 'O ELO não abriu o resultado da consulta a tempo. Confira o título e tente novamente.',
+    detail: 'Os dados do eleitor não carregaram, ou o link do ASE não foi reconhecido. Confira a tela do ELO.',
     history: 'O histórico ASE não carregou a tempo. Confira a tela do ELO.'
   });
 
@@ -795,7 +799,7 @@
 
   function checkStepTimeout() {
     if (!busy() || Date.now() - state.updated <= CONFIG.stepTimeoutMs) return false;
-    failWith(TIMEOUT_MESSAGES[state.phase] || 'Tempo esgotado. Confira as mensagens do ELO e tente de novo.');
+    failWith(TIMEOUT_MESSAGES[state.phase] || 'Tempo esgotado. Confira as mensagens do ELO e tente novamente.');
     return true;
   }
 
@@ -867,7 +871,12 @@
       updateButtons();
       fresh.node.click();
       scheduleTick();
-    } catch (error) { stop('Automação interrompida. ' + error.message); }
+    } catch (error) {
+      console.warn('[ELO ASE] Erro inesperado.', error);
+      const detail = (typeof error === 'string' ? error
+        : typeof error?.message === 'string' ? error.message : '').trim() || 'motivo não informado';
+      stop(`Automação interrompida por erro inesperado: ${detail}\nConfira o console (F12) para mais detalhes ou tente novamente.`);
+    }
     finally { running = false; refreshActivity(); }
   }
 
