@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.31
+// @version      1.5.32
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -17,7 +17,9 @@
    * - TIMEOUT_MESSAGES: mensagens de prazo excedido por etapa da consulta.
    * - montarRelatorioTurnos/relatarAusencias: redação dos resultados exibidos.
    * - lerAsesPorTurno/conferirHistorico: leitura, pendências, cores e limpeza do título.
-   * - montarPainel/exibirPopover: estrutura e apresentação da interface.
+   * - obterHtmlPainel/ESTILOS_PAINEL: estrutura e estilos do painel.
+   * - registrarEventosPainel/habilitarArrastePainel: controles, atalhos e arraste.
+   * - exibirPopover: apresentação dos avisos.
    * - escolherProximaAcao/executarCiclo: sequência de navegação no ELO.
    *
    * Preserve KEY e o formato salvo na sessão para manter a continuidade das consultas.
@@ -463,78 +465,267 @@
     }
   }
 
-  /** Monta o painel no quadro adequado e preserva entrada e posição quando o ELO troca documentos. */
-  function montarPainel(views) {
-    const host = views.find(v => v.win.name === 'principal' && v.doc.body?.tagName === 'BODY')
-      || views.find(v => v.doc.body?.tagName === 'BODY' && (v.input || v.result || v.ase))
-      || views.find(v => v.doc.body?.tagName === 'BODY');
-    if (!host) return;
-    if (panel?.isConnected && panel.ownerDocument === host.doc) return;
-    // Mantém a edição em andamento quando o ELO substitui o quadro do painel.
-    const previousInput = panel?.querySelector('[data-title]');
-    const draft = previousInput ? previousInput.value
+  // Estilos centralizados e aplicados inline: preserva a prioridade visual no ELO.
+  // A chave "raiz" identifica o próprio painel; as demais identificam seus controles.
+  const ESTILOS_PAINEL = Object.freeze({
+    raiz: `
+      position: fixed;
+      top: 80px;
+      right: 20px;
+      width: 292px;
+      max-width: calc(100vw - 24px);
+      z-index: 2147483647;
+      background: #fff;
+      color: #182333;
+      border: 1px solid #b7c6d5;
+      border-radius: 10px;
+      box-shadow: 0 5px 24px #0003;
+      font: 14px Arial,sans-serif;
+      box-sizing: border-box;
+      overflow: hidden;
+      text-align: left;
+    `,
+    '[data-handle]': `
+      background: #174975;
+      color: white;
+      padding: 12px 14px;
+      cursor: move;
+      touch-action: none;
+      font-weight: bold;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    `,
+    '[data-collapse]': `
+      background: transparent;
+      color: white;
+      border: 0;
+      font-size: 20px;
+      cursor: pointer;
+    `,
+    '[data-body]': `padding: 14px;`,
+    'label[for="elo-ase-titulo"]': `
+      display: block;
+      margin-bottom: 7px;
+    `,
+    '[data-title-wrapper]': `position: relative;`,
+    '[data-title]': `
+      box-sizing: border-box;
+      width: 100%;
+      font: 18px Arial;
+      padding: 9px 38px 9px 9px;
+      border: 1px solid #a6b6c5;
+      border-radius: 5px;
+    `,
+    '[data-clear-title]': `
+      position: absolute;
+      right: 4px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 30px;
+      height: 30px;
+      padding: 0;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #526577;
+      font: 20px Arial,sans-serif;
+      cursor: pointer;
+    `,
+    '[data-title-feedback]': `
+      font-size: 12px;
+      line-height: 1.4;
+      margin: 6px 0 0;
+      color: #526577;
+    `,
+    '[data-submit]': `
+      width: 100%;
+      padding: 10px;
+      margin-top: 10px;
+      border: 0;
+      border-radius: 5px;
+      background: #174975;
+      color: white;
+      font-weight: bold;
+      cursor: pointer;
+    `,
+    '[data-return]': `
+      width: 100%;
+      padding: 9px;
+      margin-top: 8px;
+      cursor: pointer;
+    `,
+    '[data-cancel]': `
+      width: 100%;
+      padding: 7px;
+      margin-top: 6px;
+      cursor: pointer;
+    `,
+    '[data-status]': `
+      font-size: 12px;
+      line-height: 1.45;
+      margin: 12px 0 0;
+    `
+  });
+
+  /** Define a estrutura estática. Valores digitados e mensagens são atribuídos depois como texto. */
+  function obterHtmlPainel() {
+    return `
+      <div data-handle>
+        Consulta rápida ASE
+        <button type="button" data-collapse aria-label="Recolher painel">−</button>
+      </div>
+      <div data-body>
+        <form data-form>
+          <label for="elo-ase-titulo">Título de eleitor</label>
+          <div data-title-wrapper>
+            <input
+              id="elo-ase-titulo"
+              aria-describedby="elo-ase-titulo-feedback"
+              data-title
+              type="text"
+              inputmode="numeric"
+              autocomplete="off"
+              maxlength="20"
+              placeholder="0000 0000 0000"
+            >
+            <button
+              data-clear-title
+              type="button"
+              aria-label="Limpar título"
+              title="Limpar título (Esc)"
+            >×</button>
+          </div>
+          <p id="elo-ase-titulo-feedback" data-title-feedback aria-live="polite">
+            Digite os 12 dígitos do título.
+          </p>
+          <button disabled data-submit type="submit">Consultar ASE</button>
+        </form>
+        <button data-return type="button">Voltar à consulta inicial</button>
+        <button data-cancel type="button">Parar automação</button>
+        <p data-status role="status" aria-live="polite"></p>
+      </div>
+    `;
+  }
+
+  /** Aplica a aparência inicial; cores de validação e estados dos botões continuam dinâmicos. */
+  function aplicarEstilosPainel(elemento) {
+    for (const [seletor, estilos] of Object.entries(ESTILOS_PAINEL)) {
+      const controle = seletor === 'raiz' ? elemento : elemento.querySelector(seletor);
+      controle.style.cssText = estilos;
+    }
+  }
+
+  /** Cria o painel completo sem inseri-lo na página ou registrar interações. */
+  function criarPainel(doc) {
+    const elemento = doc.createElement('section');
+    elemento.id = PANEL;
+    elemento.setAttribute('aria-label', 'Consulta rápida ASE');
+    elemento.innerHTML = obterHtmlPainel();
+    aplicarEstilosPainel(elemento);
+    return elemento;
+  }
+
+  /** Escolhe um quadro com body, dando preferência ao quadro principal do ELO. */
+  function selecionarQuadroPainel(quadros) {
+    return quadros.find(quadro => quadro.win.name === 'principal' && quadro.doc.body?.tagName === 'BODY')
+      || quadros.find(quadro => quadro.doc.body?.tagName === 'BODY' && (quadro.input || quadro.result || quadro.ase))
+      || quadros.find(quadro => quadro.doc.body?.tagName === 'BODY');
+  }
+
+  /** Limpa pelo Esc sem interferir na composição de texto ou nos atalhos legados do ELO. */
+  function tratarEscapeNoTitulo(evento) {
+    if (evento.key !== 'Escape' || evento.isComposing) return;
+    evento.preventDefault();
+    evento.stopPropagation();
+    limparCampoTitulo();
+  }
+
+  /** Reúne os eventos dos controles. É chamada somente na criação de um painel novo. */
+  function registrarEventosPainel(elemento) {
+    isolarEventosDoScript(elemento);
+    const campoTitulo = elemento.querySelector('[data-title]');
+    campoTitulo.addEventListener('input', formatarCampoTitulo);
+    campoTitulo.addEventListener('keydown', tratarEscapeNoTitulo);
+    elemento.querySelector('[data-clear-title]').addEventListener('click', limparCampoTitulo);
+    elemento.querySelector('[data-form]').addEventListener('submit', iniciarConsulta);
+    elemento.querySelector('[data-return]').addEventListener('click', voltarConsultaInicial);
+    elemento.querySelector('[data-cancel]').addEventListener('click', () => {
+      interromperConsulta('Automação interrompida. Você pode voltar à consulta inicial.');
+    });
+    elemento.querySelector('[data-collapse]').addEventListener('click', () => {
+      definirPainelRecolhido(!elemento.querySelector('[data-body]').hidden);
+    });
+  }
+
+  /** Restaura a posição salva dentro dos limites do quadro, mantendo as margens existentes. */
+  function restaurarPosicaoPainel(elemento, janela) {
+    if (!Number.isFinite(savedPosition?.x) || !Number.isFinite(savedPosition?.y)) return;
+    elemento.style.right = 'auto';
+    elemento.style.left = Math.max(0, Math.min(savedPosition.x, janela.innerWidth - 300)) + 'px';
+    elemento.style.top = Math.max(0, Math.min(savedPosition.y, janela.innerHeight - 50)) + 'px';
+  }
+
+  /** Mantém o arraste restrito ao cabeçalho e salva a posição somente ao soltá-lo. */
+  function habilitarArrastePainel(elemento, janela) {
+    const cabecalho = elemento.querySelector('[data-handle]');
+    let arraste = null;
+
+    function iniciarArraste(evento) {
+      if (evento.target.closest('button') || evento.button !== 0) return;
+      const retangulo = elemento.getBoundingClientRect();
+      arraste = {x: evento.clientX - retangulo.left, y: evento.clientY - retangulo.top};
+      cabecalho.setPointerCapture(evento.pointerId);
+      evento.preventDefault();
+    }
+
+    function moverPainel(evento) {
+      if (!arraste) return;
+      const x = Math.max(0, Math.min(evento.clientX - arraste.x, janela.innerWidth - elemento.offsetWidth));
+      const y = Math.max(0, Math.min(evento.clientY - arraste.y, janela.innerHeight - 44));
+      elemento.style.right = 'auto';
+      elemento.style.left = x + 'px';
+      elemento.style.top = y + 'px';
+      savedPosition = {x, y};
+    }
+
+    function concluirArraste() {
+      if (!arraste) return;
+      arraste = null;
+      try { salvarSessao(); } catch { /* O arraste continua disponível sem armazenamento. */ }
+    }
+
+    cabecalho.addEventListener('pointerdown', iniciarArraste);
+    cabecalho.addEventListener('pointermove', moverPainel);
+    cabecalho.addEventListener('pointerup', concluirArraste);
+    cabecalho.addEventListener('pointercancel', concluirArraste);
+  }
+
+  /** Coordena a montagem e a restauração do painel quando o ELO substitui seu documento. */
+  function montarPainel(quadros) {
+    const quadro = selecionarQuadroPainel(quadros);
+    if (!quadro || (panel?.isConnected && panel.ownerDocument === quadro.doc)) return;
+
+    // O rascunho atual tem prioridade sobre o título da consulta anterior.
+    const campoAnterior = panel?.querySelector('[data-title]');
+    const rascunho = campoAnterior ? campoAnterior.value
       : state && !state.clearTitle ? formatarTitulo(state.title) : '';
     panel?.remove();
-    const doc = host.doc;
-    panel = doc.createElement('section');
-    panel.id = PANEL;
-    panel.setAttribute('aria-label', 'Consulta rápida ASE');
-    panel.style.cssText = 'position:fixed;top:80px;right:20px;width:292px;max-width:calc(100vw - 24px);z-index:2147483647;background:#fff;color:#182333;border:1px solid #b7c6d5;border-radius:10px;box-shadow:0 5px 24px #0003;font:14px Arial,sans-serif;box-sizing:border-box;overflow:hidden;text-align:left';
-    panel.innerHTML = `<div data-handle style="background:#174975;color:white;padding:12px 14px;cursor:move;touch-action:none;font-weight:bold;display:flex;justify-content:space-between;align-items:center">Consulta rápida ASE<button type="button" data-collapse aria-label="Recolher painel" style="background:transparent;color:white;border:0;font-size:20px;cursor:pointer">−</button></div>
-      <div data-body style="padding:14px"><form data-form><label style="display:block;margin-bottom:7px" for="elo-ase-titulo">Título de eleitor</label><div style="position:relative"><input id="elo-ase-titulo" aria-describedby="elo-ase-titulo-feedback" data-title type="text" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="0000 0000 0000" style="box-sizing:border-box;width:100%;font:18px Arial;padding:9px 38px 9px 9px;border:1px solid #a6b6c5;border-radius:5px"><button data-clear-title type="button" aria-label="Limpar título" title="Limpar título (Esc)" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:30px;height:30px;padding:0;border:0;border-radius:4px;background:transparent;color:#526577;font:20px Arial,sans-serif;cursor:pointer">×</button></div><p id="elo-ase-titulo-feedback" data-title-feedback aria-live="polite" style="font-size:12px;line-height:1.4;margin:6px 0 0;color:#526577">Digite os 12 dígitos do título.</p><button disabled data-submit type="submit" style="width:100%;padding:10px;margin-top:10px;border:0;border-radius:5px;background:#174975;color:white;font-weight:bold;cursor:pointer">Consultar ASE</button></form><button data-return type="button" style="width:100%;padding:9px;margin-top:8px;cursor:pointer">Voltar à consulta inicial</button><button data-cancel type="button" style="width:100%;padding:7px;margin-top:6px;cursor:pointer">Parar automação</button><p data-status role="status" aria-live="polite" style="font-size:12px;line-height:1.45;margin:12px 0 0"></p></div>`;
-    isolarEventosDoScript(panel);
-    doc.body.append(panel);
-    panel.querySelector('[data-title]').value = draft;
-    panel.querySelector('[data-title]').addEventListener('input', formatarCampoTitulo);
-    panel.querySelector('[data-title]').addEventListener('keydown', event => {
-      if (event.key !== 'Escape' || event.isComposing) return;
-      event.preventDefault();
-      event.stopPropagation();
-      limparCampoTitulo();
-    });
-    panel.querySelector('[data-clear-title]').addEventListener('click', limparCampoTitulo);
+
+    panel = criarPainel(quadro.doc);
+    registrarEventosPainel(panel);
+    quadro.doc.body.append(panel);
+    panel.querySelector('[data-title]').value = rascunho;
     panel.querySelector('[data-status]').textContent = statusText;
-    panel.querySelector('[data-form]').addEventListener('submit', iniciarConsulta);
-    panel.querySelector('[data-return]').addEventListener('click', voltarConsultaInicial);
-    panel.querySelector('[data-cancel]').addEventListener('click', () => interromperConsulta('Automação interrompida. Você pode voltar à consulta inicial.'));
-    panel.querySelector('[data-collapse]').addEventListener('click', () => {
-      definirPainelRecolhido(!panel.querySelector('[data-body]').hidden);
-    });
-    if (Number.isFinite(savedPosition?.x) && Number.isFinite(savedPosition?.y)) {
-      panel.style.right = 'auto';
-      panel.style.left = Math.max(0, Math.min(savedPosition.x, host.win.innerWidth - 300)) + 'px';
-      panel.style.top = Math.max(0, Math.min(savedPosition.y, host.win.innerHeight - 50)) + 'px';
-    }
-    const handle = panel.querySelector('[data-handle]');
-    let drag = null;
-    handle.addEventListener('pointerdown', e => {
-      if (e.target.closest('button') || e.button !== 0) return;
-      const rect = panel.getBoundingClientRect();
-      drag = {x:e.clientX - rect.left, y:e.clientY - rect.top};
-      handle.setPointerCapture(e.pointerId);
-      e.preventDefault();
-    });
-    handle.addEventListener('pointermove', e => {
-      if (!drag) return;
-      const x = Math.max(0, Math.min(e.clientX - drag.x, host.win.innerWidth - panel.offsetWidth));
-      const y = Math.max(0, Math.min(e.clientY - drag.y, host.win.innerHeight - 44));
-      panel.style.right = 'auto'; panel.style.left = x + 'px'; panel.style.top = y + 'px';
-      savedPosition = {x, y};
-    });
-    // Persiste a posição apenas ao terminar o arraste, evitando gravações a cada movimento.
-    function concluirArraste() {
-      if (drag) {
-        drag = null;
-        try { salvarSessao(); } catch { /* O arraste continua disponível sem armazenamento. */ }
-      }
-    }
-    handle.addEventListener('pointerup', concluirArraste);
-    handle.addEventListener('pointercancel', concluirArraste);
+    restaurarPosicaoPainel(panel, quadro.win);
+    habilitarArrastePainel(panel, quadro.win);
+
     atualizarBotoes();
     focarCampoTitulo();
-    // O monitor existente reaplica o foco quando este documento terminar de carregar.
-    focusAfterLoad = doc.readyState === 'complete' ? null : doc;
+    // O monitor reaplica o foco quando o documento terminar de carregar.
+    focusAfterLoad = quadro.doc.readyState === 'complete' ? null : quadro.doc;
   }
+
 
   // 8. Monitoramento dos quadros e agendamento
 
