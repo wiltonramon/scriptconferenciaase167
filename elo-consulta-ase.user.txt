@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.30
+// @version      1.5.31
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -10,6 +10,24 @@
 
 (() => {
   'use strict';
+
+  /*
+   * GUIA DE MANUTENÇÃO
+   * - CONFIG: códigos, datas dos turnos e duração dos avisos e das etapas.
+   * - TIMEOUT_MESSAGES: mensagens de prazo excedido por etapa da consulta.
+   * - montarRelatorioTurnos/relatarAusencias: redação dos resultados exibidos.
+   * - lerAsesPorTurno/conferirHistorico: leitura, pendências, cores e limpeza do título.
+   * - montarPainel/exibirPopover: estrutura e apresentação da interface.
+   * - escolherProximaAcao/executarCiclo: sequência de navegação no ELO.
+   *
+   * Preserve KEY e o formato salvo na sessão para manter a continuidade das consultas.
+   * As etapas (query/results/detail/history/done), seletores e APIs externas mantêm
+   * os nomes originais por compatibilidade. As funções próprias usam português.
+   * O nome do eleitor aparece na tela, mas não deve ser salvo na sessão.
+   * Mantenha o arquivo único: ele é instalado diretamente como userscript.
+   */
+
+  // 1. Configuração, contratos da sessão e estado do controlador
   // Um controlador por janela. Os quadros são acompanhados pelo controlador superior.
   try { if (window.top !== window.self && window.top.location.origin === location.origin) return; }
   catch { return; }
@@ -32,6 +50,14 @@
     // Padrão conservador. Ajuste se a mensagem real do ELO tiver outra redação.
     noResultPattern: /^(?:nenhum (?:registro|eleitor|resultado)(?: foi)? (?:encontrado|localizado)|n[ãa]o (?:foi encontrado|foi localizado) nenhum (?:registro|eleitor|resultado))[.!]?$/i
   });
+  const TIMEOUT_MESSAGES = Object.freeze({
+    query: 'O formulário de consulta do ELO não ficou disponível. Volte à consulta inicial e tente novamente.',
+    results: 'O ELO não abriu o resultado da consulta a tempo. Confira o título e tente novamente.',
+    detail: 'Os dados do eleitor não carregaram, ou o link do ASE não foi reconhecido. Confira a tela do ELO.',
+    history: 'O histórico ASE não carregou a tempo. Confira a tela do ELO.'
+  });
+
+  // Estado temporário: WeakMap evita reter documentos que o ELO já substituiu.
   const checkedHistories = new WeakMap();
   const historyWaits = new WeakMap();
   let state = null;
@@ -50,40 +76,46 @@
   let popoverTimer = null;
   let noResultSince = 0;
 
-  function normalizeTitle(value) {
+  // 2. Título de eleitor: normalização, máscara e validação
+
+  /** Remove separadores aceitos e devolve os 12 dígitos, ou null se o formato for inválido. */
+  function normalizarTitulo(value) {
     const raw = String(value ?? '').trim();
     if (!/^[\d\s.\-]+$/.test(raw)) return null;
     const digits = raw.replace(/\D/g, '');
     return /^\d{12}$/.test(digits) ? digits : null;
   }
 
-  function formatTitle(value) {
+  /** Agrupa os dígitos em blocos de quatro para exibição, sem truncar entradas excedentes. */
+  function formatarTitulo(value) {
     // Preserva dígitos excedentes para que a validação recuse o número inteiro.
     return String(value ?? '').replace(/\D/g, '').replace(/(\d{4})(?=\d)/g, '$1 ');
   }
 
-  function isValidTitle(value) {
-    const title = normalizeTitle(value);
+  /** Valida a UF e os dois dígitos verificadores antes de permitir uma consulta. */
+  function tituloValido(value) {
+    const title = normalizarTitulo(value);
     if (!title || /^(\d)\1{11}$/.test(title)) return false;
     const uf = Number(title.slice(8, 10));
     if (uf < 1 || uf > 28) return false;
     const digits = Array.from(title, Number);
     // Módulo 11: pesos 2 a 9 no sequencial e 7, 8, 9 no código de UF + DV.
     // SP e MG usam 1 quando o resto original é zero; resto 10 resulta em zero.
-    const checkDigit = sum => {
+    const calcularDigitoVerificador = sum => {
       const remainder = sum % 11;
       return remainder === 10 ? 0 : remainder === 0 && uf <= 2 ? 1 : remainder;
     };
-    const first = checkDigit(digits.slice(0, 8).reduce((sum, digit, index) => sum + digit * (index + 2), 0));
-    const second = checkDigit(digits[8] * 7 + digits[9] * 8 + first * 9);
+    const first = calcularDigitoVerificador(digits.slice(0, 8).reduce((sum, digit, index) => sum + digit * (index + 2), 0));
+    const second = calcularDigitoVerificador(digits[8] * 7 + digits[9] * 8 + first * 9);
     return digits[10] === first && digits[11] === second;
   }
 
-  function formatTitleInput(event) {
+  /** Aplica a máscara durante a digitação e preserva a posição de edição do usuário. */
+  function formatarCampoTitulo(event) {
     const input = event.currentTarget;
     const position = input.selectionStart ?? input.value.length;
     const digitsBefore = input.value.slice(0, position).replace(/\D/g, '').length;
-    const formatted = formatTitle(input.value);
+    const formatted = formatarTitulo(input.value);
     let caret = 0;
     let digits = 0;
     while (caret < formatted.length && digits < digitsBefore) {
@@ -93,39 +125,48 @@
     if (event.inputType === 'deleteContentForward' && formatted[caret] === ' ') caret++;
     input.value = formatted;
     input.setSelectionRange(caret, caret);
-    updateButtons();
+    atualizarBotoes();
   }
 
-  function validState(value) {
+  // 3. Sessão e endereço de retorno
+
+  /** Aceita somente etapas conhecidas e sessões ainda válidas dentro de LIMIT. */
+  function estadoValido(value) {
     return Boolean(value && ['query', 'results', 'detail', 'history', 'done'].includes(value.phase)
       && /^\d{12}$/.test(value.title) && Number.isFinite(value.updated)
       && Date.now() - value.updated >= 0 && Date.now() - value.updated < LIMIT);
   }
 
-  function safeHome(value) {
+  /** Aceita retorno apenas para /sae/ na mesma origem; devolve a URL validada ou null. */
+  function validarEnderecoInicial(value) {
     try {
       const url = new URL(value, location.origin);
       return url.origin === location.origin && url.pathname.startsWith('/sae/') ? url.href : null;
     } catch { return null; }
   }
 
-  function store() {
+  /** Persiste estado, retorno e posição do painel no formato compatível com as versões anteriores. */
+  function salvarSessao() {
     // Salva a próxima etapa ANTES de um clique que possa trocar de página.
     window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition}));
   }
 
-  function restore() {
+  /** Recupera a sessão e descarta consultas expiradas ou dados que não puderem ser lidos. */
+  function restaurarSessao() {
     try {
       const saved = JSON.parse(window.sessionStorage.getItem(KEY) || 'null');
       if (!saved) return;
-      home = safeHome(saved.home);
+      home = validarEnderecoInicial(saved.home);
       savedPosition = saved.position;
-      if (validState(saved.state)) state = saved.state;
+      if (estadoValido(saved.state)) state = saved.state;
       else if (saved.state) statusText = 'Consulta anterior expirada. Inicie uma nova consulta.';
     } catch { statusText = 'Não foi possível recuperar a consulta anterior.'; }
   }
 
-  function visible(node) {
+  // 4. Leitura dos documentos e controles do ELO
+
+  /** Confere disponibilidade e visibilidade antes de usar um controle nativo do ELO. */
+  function elementoVisivel(node) {
     if (!node?.isConnected || node.disabled || node.getAttribute('aria-disabled') === 'true'
       || node.classList?.contains('ui-state-disabled')) return false;
     const win = node.ownerDocument?.defaultView;
@@ -135,34 +176,39 @@
       && style.visibility !== 'collapse' && node.getClientRects().length > 0;
   }
 
-  function electorTitle(cells) {
+  /** Lê a inscrição eleitoral na célula seguinte ao rótulo de identificação. */
+  function obterTituloEleitor(cells) {
     const label = cells.find(cell => /^Inscrição:\s*$/i.test(cell.textContent.trim()));
-    return normalizeTitle(label?.nextElementSibling?.textContent);
+    return normalizarTitulo(label?.nextElementSibling?.textContent);
   }
 
-  function callTitle(link, argumentIndex) {
+  /** Extrai a inscrição dos argumentos do onclick do ELO, sem executar esse código. */
+  function extrairTituloDoClique(link, argumentIndex) {
     const args = (link.getAttribute('onclick') || '').match(/\(\s*['"](\d+)['"](?:\s*,\s*['"]([^'"]*)['"])?/);
-    return normalizeTitle(args?.[argumentIndex + 1]);
+    return normalizarTitulo(args?.[argumentIndex + 1]);
   }
 
-  function missingAseTitle(doc, aseLinks) {
+  /** Identifica o eleitor sem link de histórico apenas após o carregamento completo dos detalhes. */
+  function obterTituloSemHistoricoAse(doc, aseLinks) {
     // O ELO omite o link ASE quando o eleitor não possui esses registros.
     // Só conclui ausência depois do carregamento completo dos detalhes.
     if (doc.readyState !== 'complete' || aseLinks.length) return null;
     const cells = Array.from(doc.querySelectorAll('td'));
     const history = cells.some(cell => /^Histórico:\s*$/i.test(cell.textContent.trim()));
-    return history ? electorTitle(cells) : null;
+    return history ? obterTituloEleitor(cells) : null;
   }
 
-  function loadedHistoryTitle(doc) {
+  /** Reconhece a tela de histórico carregada e devolve o título ao qual ela pertence. */
+  function obterTituloHistoricoCarregado(doc) {
     if (doc.readyState !== 'complete') return null;
     // Pré-filtro barato: innerText força cálculo de layout, então só é lido se o texto parece estar na página.
     if (!/Hist\S{0,3}rico\s*ASE/i.test(doc.body?.textContent || '')) return null;
     if (!/^\s*Histórico\s+ASE\s*$/im.test(doc.body?.innerText || '')) return null;
-    return electorTitle(Array.from(doc.querySelectorAll('td')));
+    return obterTituloEleitor(Array.from(doc.querySelectorAll('td')));
   }
 
-  function readTurnASEs(doc, code = CONFIG.aseCode, requiredStatus = '') {
+  /** Lê código e data de ocorrência na mesma linha. Retorna boolean[] por turno, ou null se a tabela não puder ser interpretada. */
+  function lerAsesPorTurno(doc, code = CONFIG.aseCode, requiredStatus = '') {
     // Cada código e data precisam estar na mesma linha da tabela de histórico.
     const rows = Array.from(doc.querySelectorAll('tr'));
     const header = rows.find(row => {
@@ -190,11 +236,12 @@
     return found;
   }
 
-  function electorName(doc, title) {
+  /** Obtém o nome na linha do mesmo título, evitando nomes de outros elementos da página. */
+  function obterNomeEleitor(doc, title) {
     // Usa a linha de identificação do mesmo título, sem confundir outros <font> da página.
     for (const row of doc.querySelectorAll('tr')) {
       const cells = Array.from(row.cells);
-      if (electorTitle(cells) !== title) continue;
+      if (obterTituloEleitor(cells) !== title) continue;
       const label = cells.find(cell => /^Nome:\s*$/i.test(cell.textContent.trim()));
       const name = label?.nextElementSibling?.textContent.replace(/\s+/g, ' ').trim();
       if (name) return name;
@@ -202,30 +249,77 @@
     return '';
   }
 
-  function turnLabel(turn) {
+  /** Aplica uma correção visual isolada para a tabela não cobrir o botão Voltar do ELO. */
+  function corrigirBotaoVoltarHistorico(doc) {
+    if (!doc.querySelector('a[name="btn_voltar"] img[name="img_btn_voltar"]')
+      || doc.querySelector('style[data-elo-ase-back-fix]')) return;
+    // A tabela do ELO usa position:absolute e z-index:2, cobrindo o botão nativo.
+    const style = doc.createElement('style');
+    style.setAttribute('data-elo-ase-back-fix', '');
+    style.textContent = 'a[name="btn_voltar"] img[name="img_btn_voltar"] { position:relative; z-index:3; }';
+    (doc.head || doc.documentElement).append(style);
+  }
+
+  /** Reúne os controles e identificações de todos os quadros acessíveis, com limite de profundidade. */
+  function coletarQuadros() {
+    const views = [];
+    // Visita recursiva protegida contra quadros de outra origem e aninhamento excessivo.
+    function visitarQuadro(win, depth) {
+      if (depth > 6) return;
+      let doc;
+      try {
+        doc = win.document;
+        if (!doc.documentElement) return;
+      } catch { return; } // O acesso a quadros de outra origem pode ser recusado.
+      const links = Array.from(doc.querySelectorAll('a[onclick]'));
+      const firstResult = links.find(a => /^\s*consEleitor\s*\(/.test(a.getAttribute('onclick') || '') && elementoVisivel(a));
+      const aseLinks = links.filter(a => /^\s*ConsultaHistoricoFase\s*\(/.test(a.getAttribute('onclick') || ''));
+      // Verifica a existência de ASE antes de filtrar links disponíveis para clique.
+      const ase = aseLinks.find(a => (!state || extrairTituloDoClique(a, 1) === state.title) && elementoVisivel(a));
+      const historyTitle = obterTituloHistoricoCarregado(doc);
+      views.push({win, doc, input:doc.querySelector('#num_inscricao_cpf'),
+        consult:doc.querySelector('input[name="btn_consultar"]'),
+        result:firstResult ? {node:firstResult, title:extrairTituloDoClique(firstResult, 0)} : null,
+        ase:ase ? {node:ase, title:extrairTituloDoClique(ase, 1)} : null,
+        noAseTitle:state?.phase === 'detail' ? obterTituloSemHistoricoAse(doc, aseLinks) : null,
+        historyTitle});
+      for (const frame of doc.querySelectorAll('frame,iframe')) {
+        if (frame.contentWindow) visitarQuadro(frame.contentWindow, depth + 1);
+      }
+    }
+    visitarQuadro(window, 0);
+    return views;
+  }
+
+  // 5. Textos dos relatórios
+
+  /** Padroniza a grafia do turno usada nos relatórios. */
+  function rotuloTurno(turn) {
     // Mesma grafia ("1º Turno") em todas as mensagens.
     return turn.label.replace(/turno/gi, 'Turno');
   }
 
-  function absenceReport(absenceFound) {
+  /** Descreve os turnos sem ASE 094 ou avisa quando a conferência não foi possível. */
+  function relatarAusencias(absenceFound) {
     if (!absenceFound) return `Não foi possível conferir o ASE ${CONFIG.absenceAseCode}. Confira manualmente a situação dos registros no ELO.`;
     return CONFIG.turns.filter((_, index) => !absenceFound[index])
-      .map(turn => `Não há ausência (ASE ${CONFIG.absenceAseCode}) registrada no ${turnLabel(turn)} (${turn.date}).`).join('\n');
+      .map(turn => `Não há ausência (ASE ${CONFIG.absenceAseCode}) registrada no ${rotuloTurno(turn)} (${turn.date}).`).join('\n');
   }
 
-  function turnReport(title, found, name = '', absenceFound) {
-    const heading = `ELEITOR(A): ${name.trim() || 'nome não identificado'}\nTÍTULO: ${formatTitle(title)}`;
+  /** Monta somente o texto do relatório; a definição de cor e a limpeza do campo ficam na conferência. */
+  function montarRelatorioTurnos(title, found, name = '', absenceFound) {
+    const heading = `ELEITOR(A): ${name.trim() || 'nome não identificado'}\nTÍTULO: ${formatarTitulo(title)}`;
     if (found?.every(Boolean)) {
-      const dates = CONFIG.turns.map(turn => `${turnLabel(turn)} (${turn.date})`).join('\n');
+      const dates = CONFIG.turns.map(turn => `${rotuloTurno(turn)} (${turn.date})`).join('\n');
       return `${heading}\nASE ${CONFIG.aseCode} registrado ${CONFIG.turns.length === 2 ? 'nos dois turnos' : 'em todos os turnos'}.\n${dates}\nNão há registros a serem feitos.`;
     }
-    const absence = absenceFound === undefined ? '' : absenceReport(absenceFound);
+    const absence = absenceFound === undefined ? '' : relatarAusencias(absenceFound);
     if (!found) {
       return heading + '\nNão foi possível identificar a tabela do histórico ASE. Confira manualmente os registros dos turnos.'
         + (absence ? `\n${absence}` : '');
     }
     const sections = CONFIG.turns.map((turn, index) => {
-      const label = turnLabel(turn);
+      const label = rotuloTurno(turn);
       const lines = [];
       if (absenceFound?.[index]) {
         lines.push(`ASE ${CONFIG.absenceAseCode} encontrado no ${label} (${turn.date}).`);
@@ -244,220 +338,19 @@
     return heading + '\n' + sections.filter(Boolean).join('\n\n');
   }
 
-  function verifyHistory(views) {
-    // Retorna true quando relatou o histórico, 'waiting' quando aguarda a tabela e false quando não havia o que fazer.
-    const history = views.find(view => view.doc && view.historyTitle
-      && (!busy() || (state.phase === 'history' && state.title === view.historyTitle)));
-    // O cache evita avisos repetidos em repouso, mas não substitui uma nova consulta.
-    if (!history || (!busy() && checkedHistories.get(history.doc) === history.historyTitle)) return false;
-    const found = readTurnASEs(history.doc);
-    if (!found) {
-      // O documento já terminou de carregar. Só aguarda se a tabela ainda não existe.
-      let waiting = historyWaits.get(history.doc);
-      if (!waiting || waiting.title !== history.historyTitle) {
-        waiting = {title:history.historyTitle, since:Date.now()};
-        historyWaits.set(history.doc, waiting);
-      }
-      if (Date.now() - waiting.since < CONFIG.historyRetryMs) {
-        setStatus('Lendo o histórico ASE…');
-        return 'waiting';
-      }
-    }
-    const absenceFound = readTurnASEs(history.doc, CONFIG.absenceAseCode, ['ATIVO', 'INATIVO', 'FACULTADO']);
-    const message = turnReport(history.historyTitle, found, electorName(history.doc, history.historyTitle), absenceFound);
-    // Uma pendência exige 094 ATIVO, INATIVO ou FACULTADO e ausência de 167 na mesma data.
-    const pending = Boolean(found && absenceFound?.some((absence, index) => absence && !found[index]));
-    const tone = found?.every(Boolean) ? 'success'
-      : !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
-    const input = panel?.querySelector('[data-title]');
-    // Só considera ausência confirmada quando a leitura dos dois turnos foi possível.
-    const noAbsence = Boolean(absenceFound && !absenceFound.some(Boolean));
-    // Preserva outro título que já esteja sendo preparado para a próxima consulta.
-    const clearInput = (Boolean(found?.some(Boolean)) || noAbsence) && (!input || !input.value.trim()
-      || normalizeTitle(input.value) === history.historyTitle);
-    const saveCleared = clearInput && state?.title === history.historyTitle && !state.clearTitle;
-    if (saveCleared) state.clearTitle = true;
-    // O nome do eleitor aparece só na tela; o que fica salvo na sessão não o contém.
-    if (busy()) finish(message, false, turnReport(history.historyTitle, found, '', absenceFound));
-    else {
-      setStatus(message);
-      if (saveCleared) store();
-    }
-    showPopover(message, history.doc, tone);
-    // Marca a leitura após concluir a atualização do aviso.
-    checkedHistories.set(history.doc, history.historyTitle);
-    historyWaits.delete(history.doc);
-    if (clearInput) {
-      if (input) input.value = '';
-      updateButtons();
-      setCollapsed(false);
-      focusTitleInput();
-    }
-    return true;
-  }
+  // 6. Popovers: apresentação, prazo e fechamento
 
-  function busy() {
-    return Boolean(state && state.phase !== 'done');
-  }
-
-  function scheduleTick(delay = 0) {
-    if (suspended) return;
-    const due = Date.now() + delay;
-    if (pendingTick !== null) {
-      // Um evento de carregamento não deve ficar atrás de uma retentativa atrasada.
-      if (due >= pendingTickDue) return;
-      window.clearTimeout(pendingTick);
-    }
-    pendingTickDue = due;
-    pendingTick = window.setTimeout(() => {
-      pendingTick = null; pendingTickDue = 0; tick();
-    }, delay);
-  }
-
-  function ownMutation(record) {
-    const element = record.target.nodeType === 1 ? record.target : record.target.parentElement;
-    return Boolean(element?.closest?.('#' + PANEL + ',[data-elo-ase-popover]'));
-  }
-
-  function detachMonitor(doc, monitor) {
-    monitor.observer?.disconnect();
-    doc.removeEventListener('load', monitor.onLoad, true);
-    doc.removeEventListener('readystatechange', monitor.onReady);
-  }
-
-  function syncMonitoring(views) {
-    const currentDocs = new Set(views.map(view => view.doc));
-    if (focusAfterLoad && !currentDocs.has(focusAfterLoad)) focusAfterLoad = null;
-    // Libera referências a documentos substituídos durante a navegação.
-    for (const [doc, monitor] of monitors) {
-      if (!currentDocs.has(doc)) { detachMonitor(doc, monitor); monitors.delete(doc); }
-    }
-    for (const doc of currentDocs) {
-      if (monitors.has(doc)) continue;
-      const onLoad = event => {
-        if (event.target === doc || /^(I?FRAME)$/.test(event.target?.tagName || '')) scheduleTick();
-      };
-      const onReady = () => { if (doc.readyState !== 'loading') scheduleTick(); };
-      doc.addEventListener('load', onLoad, true);
-      doc.addEventListener('readystatechange', onReady);
-      monitors.set(doc, {onLoad, onReady, observer:null});
-    }
-  }
-
-  function refreshActivity() {
-    const active = !suspended && busy();
-    if (active && timer === null) timer = window.setInterval(() => scheduleTick(), 800);
-    else if (!active && timer !== null) { window.clearInterval(timer); timer = null; }
-    for (const [doc, monitor] of monitors) {
-      if (active && !monitor.observer) {
-        monitor.observer = new MutationObserver(records => {
-          if (records.some(record => !ownMutation(record))) scheduleTick(80);
-        });
-        monitor.observer.observe(doc.documentElement, {childList:true, subtree:true, attributes:true,
-          attributeFilter:['class', 'style', 'disabled', 'aria-disabled', 'onclick']});
-      } else if (!active && monitor.observer) {
-        monitor.observer.disconnect(); monitor.observer = null;
-      }
-    }
-  }
-
-  function cleanupMonitoring() {
-    if (timer !== null) window.clearInterval(timer);
-    if (pendingTick !== null) window.clearTimeout(pendingTick);
-    timer = null; pendingTick = null; pendingTickDue = 0; focusAfterLoad = null;
-    for (const [doc, monitor] of monitors) detachMonitor(doc, monitor);
-    monitors.clear();
-  }
-
-  function fixHistoryBackButton(doc) {
-    if (!doc.querySelector('a[name="btn_voltar"] img[name="img_btn_voltar"]')
-      || doc.querySelector('style[data-elo-ase-back-fix]')) return;
-    // A tabela do ELO usa position:absolute e z-index:2, cobrindo o botão nativo.
-    const style = doc.createElement('style');
-    style.setAttribute('data-elo-ase-back-fix', '');
-    style.textContent = 'a[name="btn_voltar"] img[name="img_btn_voltar"] { position:relative; z-index:3; }';
-    (doc.head || doc.documentElement).append(style);
-  }
-
-  function collect() {
-    const views = [];
-    function visit(win, depth) {
-      if (depth > 6) return;
-      let doc;
-      try {
-        doc = win.document;
-        if (!doc.documentElement) return;
-      } catch { return; } // O acesso a quadros de outra origem pode ser recusado.
-      const links = Array.from(doc.querySelectorAll('a[onclick]'));
-      const firstResult = links.find(a => /^\s*consEleitor\s*\(/.test(a.getAttribute('onclick') || '') && visible(a));
-      const aseLinks = links.filter(a => /^\s*ConsultaHistoricoFase\s*\(/.test(a.getAttribute('onclick') || ''));
-      // Verifica a existência de ASE antes de filtrar links disponíveis para clique.
-      const ase = aseLinks.find(a => (!state || callTitle(a, 1) === state.title) && visible(a));
-      const historyTitle = loadedHistoryTitle(doc);
-      views.push({win, doc, input:doc.querySelector('#num_inscricao_cpf'),
-        consult:doc.querySelector('input[name="btn_consultar"]'),
-        result:firstResult ? {node:firstResult, title:callTitle(firstResult, 0)} : null,
-        ase:ase ? {node:ase, title:callTitle(ase, 1)} : null,
-        noAseTitle:state?.phase === 'detail' ? missingAseTitle(doc, aseLinks) : null,
-        historyTitle});
-      for (const frame of doc.querySelectorAll('frame,iframe')) {
-        if (frame.contentWindow) visit(frame.contentWindow, depth + 1);
-      }
-    }
-    visit(window, 0);
-    return views;
-  }
-
-  function queryReady(view) {
-    return Boolean(view?.doc?.readyState === 'complete' && visible(view.input) && visible(view.consult));
-  }
-
-  function navigationReady(views) {
-    return views.every(view => {
-      try {
-        // load_menu() continua por AJAX depois do load. Navegar antes pode abortá-lo.
-        return view.doc.readyState === 'complete' && !(view.win.jQuery?.active > 0);
-      } catch { return false; } // Um quadro em troca de documento será relido.
-    });
-  }
-
-  function chooseAction(current, views) {
-    if (!current || current.phase === 'done') return null;
-    if (current.phase === 'query') {
-      const view = views.find(queryReady);
-      return view ? {kind:'query', view} : null;
-    }
-    if (current.phase === 'history') {
-      return views.some(v => v.historyTitle === current.title) ? {kind:'complete'} : null;
-    }
-    const detail = views.find(v => v.ase?.title === current.title);
-    if (detail) return {kind:'ase', node:detail.ase.node};
-    if (current.phase === 'detail' && views.some(v => v.noAseTitle === current.title)) {
-      return {kind:'noase'};
-    }
-    if (current.phase === 'results') {
-      const result = views.find(v => v.result);
-      if (result) return result.result.title === current.title
-        ? {kind:'result', node:result.result.node} : {kind:'mismatch'};
-    }
-    return null;
-  }
-
-  function setStatus(text) {
-    statusText = text;
-    const status = panel?.querySelector('[data-status]');
-    if (status && status.textContent !== text) status.textContent = text;
-  }
-
-  function clearPopover() {
+  /** Fecha o aviso atual e cancela seu temporizador para não afetar um aviso posterior. */
+  function fecharPopover() {
     if (popoverTimer !== null) window.clearTimeout(popoverTimer);
     popoverTimer = null;
     popover?.remove();
     popover = null;
   }
 
-  function showPopover(message, doc, tone = 'warning') {
-    clearPopover();
+  /** Exibe qualquer tipo de aviso por CONFIG.popoverDurationMs, com fechamento manual pelo botão X. */
+  function exibirPopover(message, doc, tone = 'warning') {
+    fecharPopover();
     if (doc?.body?.tagName !== 'BODY') return;
     popover = doc.createElement('div');
     popover.setAttribute('role', 'alert');
@@ -478,9 +371,9 @@
     close.title = 'Fechar aviso';
     close.setAttribute('aria-label', 'Fechar aviso');
     close.style.cssText = 'position:absolute;top:8px;right:8px;width:28px;height:28px;margin:0;padding:0;border:0;border-radius:4px;background:transparent;color:inherit;font:700 24px/1 Arial,sans-serif;cursor:pointer;pointer-events:auto;display:flex;align-items:center;justify-content:center';
-    close.addEventListener('click', clearPopover);
+    close.addEventListener('click', fecharPopover);
     popover.append(close);
-    isolatePanelEvents(popover);
+    isolarEventosDoScript(popover);
     doc.body.append(popover);
     // A camada superior mantém o aviso à frente do painel, quando disponível.
     if (typeof popover.showPopover === 'function') {
@@ -488,24 +381,24 @@
       try { popover.showPopover(); }
       catch { popover.removeAttribute('popover'); }
     }
-    popoverTimer = window.setTimeout(clearPopover, CONFIG.popoverDurationMs);
+    popoverTimer = window.setTimeout(fecharPopover, CONFIG.popoverDurationMs);
   }
 
-  function stop(message) {
-    clearPopover();
-    state = null;
-    noResultSince = 0;
-    refreshActivity();
-    try { store(); } catch { /* Ainda permite parar se o armazenamento estiver indisponível. */ }
-    setStatus(message);
-    updateButtons();
+  // 7. Painel: montagem, entrada e interação
+
+  /** Atualiza a mensagem persistente do painel usando texto, sem interpretar HTML. */
+  function atualizarMensagemPainel(text) {
+    statusText = text;
+    const status = panel?.querySelector('[data-status]');
+    if (status && status.textContent !== text) status.textContent = text;
   }
 
-  function updateButtons() {
+  /** Atualiza validação, orientação e disponibilidade dos botões de acordo com a entrada e a etapa. */
+  function atualizarBotoes() {
     if (!panel) return;
-    const active = busy();
+    const active = consultaEmAndamento();
     const input = panel.querySelector('[data-title]');
-    const valid = isValidTitle(input.value);
+    const valid = tituloValido(input.value);
     const length = input.value.replace(/\D/g, '').length;
     const invalid = length >= 12 && !valid;
     const feedback = panel.querySelector('[data-title-feedback]');
@@ -527,131 +420,8 @@
     panel.querySelector('[data-return]').disabled = !home;
   }
 
-  function start(event) {
-    event.preventDefault();
-    if (busy()) return;
-    const title = normalizeTitle(panel.querySelector('[data-title]').value);
-    if (!isValidTitle(title)) { updateButtons(); focusTitleInput(); return; }
-    const view = collect().find(v => visible(v.input) && visible(v.consult));
-    if (view) { submitQuery(view, title); return; }
-    const destination = safeHome(home);
-    if (!destination) { setStatus('Abra uma vez a tela inicial de consulta para registrar o retorno automático.'); return; }
-    // Preserva o título antes de recarregar a tela inicial, sem clicar no histórico antigo.
-    state = {phase:'query', title, updated:Date.now()};
-    try {
-      store();
-      clearPopover();
-      setStatus('Abrindo a consulta inicial. A nova pesquisa continuará automaticamente…');
-      updateButtons();
-      refreshActivity();
-      window.location.assign(destination);
-    } catch (error) { stop('Não foi possível iniciar a nova consulta. ' + error.message); }
-  }
-
-  function submitQuery(view, title) {
-    if (!isValidTitle(title)) {
-      failWith('Título inválido. Corrija os números para consultar.');
-      return;
-    }
-    const views = collect();
-    if (!queryReady(view) || !navigationReady(views)) {
-      // O body.onload do ELO inicializa e limpa o formulário. Aguarda antes de preencher.
-      const changed = state?.phase !== 'query' || state.title !== title;
-      if (changed) {
-        state = {phase:'query', title, updated:Date.now()};
-      }
-      try {
-        // O estado já salvo não muda durante as retentativas de carregamento.
-        if (changed) store();
-        setStatus('Aguardando o ELO concluir o carregamento interno para consultar…');
-        updateButtons();
-        refreshActivity();
-        scheduleTick(100);
-      } catch (error) { stop('Não foi possível preparar a consulta. ' + error.message); }
-      return;
-    }
-    const otherText = Array.from(view.input.form?.querySelectorAll('input[type="text"]') || [])
-      .some(input => input !== view.input && input.value.trim());
-    if (otherText) {
-      stop('Limpe os outros filtros da página antes de consultar apenas pelo título.');
-      return;
-    }
-    home = safeHome(location.href);
-    state = {phase:'results', title, updated:Date.now()};
-    noResultSince = 0;
-    try {
-      store();
-      view.input.focus();
-      const setter = Object.getOwnPropertyDescriptor(view.win.HTMLInputElement.prototype, 'value')?.set;
-      if (setter) setter.call(view.input, title);
-      else view.input.value = title;
-      // O ELO avisa título inválido com alert(). Captura a mensagem para tratá-la aqui.
-      const alerts = [];
-      const wins = views.map(item => item.win);
-      withCapturedAlerts(wins, alerts, () => {
-        view.input.dispatchEvent(new view.win.Event('input', {bubbles:true}));
-        // Não simula teclas: rotinas legadas podem exigir dados que Event não possui.
-        view.input.dispatchEvent(new view.win.Event('change', {bubbles:true}));
-        view.input.blur(); // Executa o onblur nativo do ELO antes da consulta.
-      });
-      if (alerts.length) { rejectQuery(title, alerts); return; }
-      // A validação nativa pode cancelar ou corrigir a inscrição.
-      if (view.input.value.replace(/\D/g, '') !== title) {
-        throw new Error('O ELO alterou ou limpou o título digitado. Confira os números e tente novamente.');
-      }
-      const inscription = view.input.form?.querySelector('input[name="num_inscricao"]');
-      const cpf = view.input.form?.querySelector('input[name="num_cpf"]');
-      if (!inscription || !cpf) {
-        throw new Error('O formulário do ELO não disponibilizou os campos de Inscrição/CPF. Reabra a consulta.');
-      }
-      // Estes são os parâmetros do formulário que selecionam a pesquisa por título.
-      // Não depende de o onblur sintético atualizar os campos internos do ELO.
-      inscription.value = title;
-      cpf.value = '';
-      setStatus('Consultando inscrição. Aguardando o resultado…');
-      updateButtons();
-      if (!visible(view.consult) || !visible(view.input)) throw new Error('O formulário mudou. Tente novamente.');
-      clearPopover();
-      refreshActivity();
-      withCapturedAlerts(wins, alerts, () => view.consult.click());
-      if (alerts.length) { rejectQuery(title, alerts); return; }
-      scheduleTick();
-    } catch (error) { stop('Consulta interrompida. ' + error.message); }
-  }
-
-  function withCapturedAlerts(wins, messages, action) {
-    const saved = [];
-    for (const win of new Set(wins)) {
-      try {
-        const original = win.alert;
-        win.alert = text => { messages.push(String(text ?? '').replace(/\s+/g, ' ').trim()); };
-        saved.push([win, original]);
-      } catch { /* quadro inacessível */ }
-    }
-    try { return action(); }
-    finally {
-      for (const [win, original] of saved) { try { win.alert = original; } catch { /* ignora */ } }
-    }
-  }
-
-  function rejectQuery(title, alerts) {
-    const reason = alerts.filter(Boolean).join(' ') || 'motivo não informado.';
-    const message = `O ELO recusou o título ${formatTitle(title)}: ${reason}`;
-    stop(message);
-    setCollapsed(false);
-    showPopover(message + '\nCorrija o título e consulte novamente.', panel?.ownerDocument, 'error');
-    focusTitleInput(true);
-  }
-
-  function returnHome() {
-    if (!home) { setStatus('Abra a tela inicial de consulta para registrar o retorno.'); return; }
-    const destination = safeHome(home);
-    if (!destination) { stop('Endereço de retorno inválido.'); return; }
-    stop('Voltando à consulta inicial…');
-    window.location.assign(destination);
-  }
-
-  function setCollapsed(collapsed) {
+  /** Recolhe ou expande o conteúdo do painel e atualiza o rótulo acessível do botão. */
+  function definirPainelRecolhido(collapsed) {
     if (!panel) return;
     panel.querySelector('[data-body]').hidden = collapsed;
     const button = panel.querySelector('[data-collapse]');
@@ -659,20 +429,8 @@
     button.setAttribute('aria-label', collapsed ? 'Expandir painel' : 'Recolher painel');
   }
 
-  function finish(message, noAse = false, storedMessage = message) {
-    state.phase = 'done';
-    state.message = storedMessage;
-    state.updated = Date.now();
-    store();
-    setStatus(message);
-    if (noAse) {
-      setCollapsed(false);
-      showPopover(message, panel?.ownerDocument, 'success');
-    }
-    updateButtons();
-  }
-
-  function focusTitleInput(select = false) {
+  /** Foca o campo apenas quando ele está conectado e visível; pode selecionar seu conteúdo. */
+  function focarCampoTitulo(select = false) {
     const input = panel?.querySelector('[data-title]');
     if (input?.isConnected && !panel.querySelector('[data-body]').hidden) {
       input.focus({preventScroll:true});
@@ -680,20 +438,22 @@
     }
   }
 
-  function clearTitleInput() {
+  /** Limpa a entrada e marca a sessão para não restaurar o título quando o painel for recriado. */
+  function limparCampoTitulo() {
     const input = panel?.querySelector('[data-title]');
     if (!input) return;
     input.value = '';
-    updateButtons();
+    atualizarBotoes();
     // Evita restaurar o título apagado quando o painel for recriado.
     if (state && !state.clearTitle) {
       state.clearTitle = true;
-      try { store(); } catch { /* A limpeza do campo continua disponível. */ }
+      try { salvarSessao(); } catch { /* A limpeza do campo continua disponível. */ }
     }
-    focusTitleInput();
+    focarCampoTitulo();
   }
 
-  function isolatePanelEvents(element) {
+  /** Impede que eventos dos controles próprios acionem rotinas legadas da página. */
+  function isolarEventosDoScript(element) {
     // Os tratadores globais legados do ELO não conhecem os controles deste painel.
     // Interrompe só a propagação: digitação, foco e envio por Enter continuam nativos.
     for (const type of ['keydown', 'keypress', 'keyup', 'click', 'dblclick',
@@ -703,7 +463,8 @@
     }
   }
 
-  function mount(views) {
+  /** Monta o painel no quadro adequado e preserva entrada e posição quando o ELO troca documentos. */
+  function montarPainel(views) {
     const host = views.find(v => v.win.name === 'principal' && v.doc.body?.tagName === 'BODY')
       || views.find(v => v.doc.body?.tagName === 'BODY' && (v.input || v.result || v.ase))
       || views.find(v => v.doc.body?.tagName === 'BODY');
@@ -712,7 +473,7 @@
     // Mantém a edição em andamento quando o ELO substitui o quadro do painel.
     const previousInput = panel?.querySelector('[data-title]');
     const draft = previousInput ? previousInput.value
-      : state && !state.clearTitle ? formatTitle(state.title) : '';
+      : state && !state.clearTitle ? formatarTitulo(state.title) : '';
     panel?.remove();
     const doc = host.doc;
     panel = doc.createElement('section');
@@ -721,23 +482,23 @@
     panel.style.cssText = 'position:fixed;top:80px;right:20px;width:292px;max-width:calc(100vw - 24px);z-index:2147483647;background:#fff;color:#182333;border:1px solid #b7c6d5;border-radius:10px;box-shadow:0 5px 24px #0003;font:14px Arial,sans-serif;box-sizing:border-box;overflow:hidden;text-align:left';
     panel.innerHTML = `<div data-handle style="background:#174975;color:white;padding:12px 14px;cursor:move;touch-action:none;font-weight:bold;display:flex;justify-content:space-between;align-items:center">Consulta rápida ASE<button type="button" data-collapse aria-label="Recolher painel" style="background:transparent;color:white;border:0;font-size:20px;cursor:pointer">−</button></div>
       <div data-body style="padding:14px"><form data-form><label style="display:block;margin-bottom:7px" for="elo-ase-titulo">Título de eleitor</label><div style="position:relative"><input id="elo-ase-titulo" aria-describedby="elo-ase-titulo-feedback" data-title type="text" inputmode="numeric" autocomplete="off" maxlength="20" placeholder="0000 0000 0000" style="box-sizing:border-box;width:100%;font:18px Arial;padding:9px 38px 9px 9px;border:1px solid #a6b6c5;border-radius:5px"><button data-clear-title type="button" aria-label="Limpar título" title="Limpar título (Esc)" style="position:absolute;right:4px;top:50%;transform:translateY(-50%);width:30px;height:30px;padding:0;border:0;border-radius:4px;background:transparent;color:#526577;font:20px Arial,sans-serif;cursor:pointer">×</button></div><p id="elo-ase-titulo-feedback" data-title-feedback aria-live="polite" style="font-size:12px;line-height:1.4;margin:6px 0 0;color:#526577">Digite os 12 dígitos do título.</p><button disabled data-submit type="submit" style="width:100%;padding:10px;margin-top:10px;border:0;border-radius:5px;background:#174975;color:white;font-weight:bold;cursor:pointer">Consultar ASE</button></form><button data-return type="button" style="width:100%;padding:9px;margin-top:8px;cursor:pointer">Voltar à consulta inicial</button><button data-cancel type="button" style="width:100%;padding:7px;margin-top:6px;cursor:pointer">Parar automação</button><p data-status role="status" aria-live="polite" style="font-size:12px;line-height:1.45;margin:12px 0 0"></p></div>`;
-    isolatePanelEvents(panel);
+    isolarEventosDoScript(panel);
     doc.body.append(panel);
     panel.querySelector('[data-title]').value = draft;
-    panel.querySelector('[data-title]').addEventListener('input', formatTitleInput);
+    panel.querySelector('[data-title]').addEventListener('input', formatarCampoTitulo);
     panel.querySelector('[data-title]').addEventListener('keydown', event => {
       if (event.key !== 'Escape' || event.isComposing) return;
       event.preventDefault();
       event.stopPropagation();
-      clearTitleInput();
+      limparCampoTitulo();
     });
-    panel.querySelector('[data-clear-title]').addEventListener('click', clearTitleInput);
+    panel.querySelector('[data-clear-title]').addEventListener('click', limparCampoTitulo);
     panel.querySelector('[data-status]').textContent = statusText;
-    panel.querySelector('[data-form]').addEventListener('submit', start);
-    panel.querySelector('[data-return]').addEventListener('click', returnHome);
-    panel.querySelector('[data-cancel]').addEventListener('click', () => stop('Automação interrompida. Você pode voltar à consulta inicial.'));
+    panel.querySelector('[data-form]').addEventListener('submit', iniciarConsulta);
+    panel.querySelector('[data-return]').addEventListener('click', voltarConsultaInicial);
+    panel.querySelector('[data-cancel]').addEventListener('click', () => interromperConsulta('Automação interrompida. Você pode voltar à consulta inicial.'));
     panel.querySelector('[data-collapse]').addEventListener('click', () => {
-      setCollapsed(!panel.querySelector('[data-body]').hidden);
+      definirPainelRecolhido(!panel.querySelector('[data-body]').hidden);
     });
     if (Number.isFinite(savedPosition?.x) && Number.isFinite(savedPosition?.y)) {
       panel.style.right = 'auto';
@@ -760,48 +521,384 @@
       panel.style.right = 'auto'; panel.style.left = x + 'px'; panel.style.top = y + 'px';
       savedPosition = {x, y};
     });
-    function endDrag() { if (drag) { drag = null; try { store(); } catch {} } }
-    handle.addEventListener('pointerup', endDrag);
-    handle.addEventListener('pointercancel', endDrag);
-    updateButtons();
-    focusTitleInput();
+    // Persiste a posição apenas ao terminar o arraste, evitando gravações a cada movimento.
+    function concluirArraste() {
+      if (drag) {
+        drag = null;
+        try { salvarSessao(); } catch { /* O arraste continua disponível sem armazenamento. */ }
+      }
+    }
+    handle.addEventListener('pointerup', concluirArraste);
+    handle.addEventListener('pointercancel', concluirArraste);
+    atualizarBotoes();
+    focarCampoTitulo();
     // O monitor existente reaplica o foco quando este documento terminar de carregar.
     focusAfterLoad = doc.readyState === 'complete' ? null : doc;
   }
 
-  const TIMEOUT_MESSAGES = Object.freeze({
-    query: 'O formulário de consulta do ELO não ficou disponível. Volte à consulta inicial e tente novamente.',
-    results: 'O ELO não abriu o resultado da consulta a tempo. Confira o título e tente novamente.',
-    detail: 'Os dados do eleitor não carregaram, ou o link do ASE não foi reconhecido. Confira a tela do ELO.',
-    history: 'O histórico ASE não carregou a tempo. Confira a tela do ELO.'
-  });
+  // 8. Monitoramento dos quadros e agendamento
 
-  function noResultMessage(doc) {
+  /** Agenda uma verificação sem duplicar tarefas nem atrasar uma execução já mais próxima. */
+  function agendarVerificacao(delay = 0) {
+    if (suspended) return;
+    const due = Date.now() + delay;
+    if (pendingTick !== null) {
+      // Um evento de carregamento não deve ficar atrás de uma retentativa atrasada.
+      if (due >= pendingTickDue) return;
+      window.clearTimeout(pendingTick);
+    }
+    pendingTickDue = due;
+    pendingTick = window.setTimeout(() => {
+      pendingTick = null; pendingTickDue = 0; executarCiclo();
+    }, delay);
+  }
+
+  /** Reconhece alterações do painel e dos avisos para evitar ciclos causados pela própria interface. */
+  function alteracaoDoScript(record) {
+    const element = record.target.nodeType === 1 ? record.target : record.target.parentElement;
+    return Boolean(element?.closest?.('#' + PANEL + ',[data-elo-ase-popover]'));
+  }
+
+  /** Desconecta o observador e os eventos de um documento substituído ou encerrado. */
+  function removerMonitorDocumento(doc, monitor) {
+    monitor.observer?.disconnect();
+    doc.removeEventListener('load', monitor.aoCarregarQuadro, true);
+    doc.removeEventListener('readystatechange', monitor.aoAlterarCarregamento);
+  }
+
+  /** Mantém monitores somente para documentos acessíveis que ainda pertencem à janela. */
+  function sincronizarMonitores(views) {
+    const currentDocs = new Set(views.map(view => view.doc));
+    if (focusAfterLoad && !currentDocs.has(focusAfterLoad)) focusAfterLoad = null;
+    // Libera referências a documentos substituídos durante a navegação.
+    for (const [doc, monitor] of monitors) {
+      if (!currentDocs.has(doc)) { removerMonitorDocumento(doc, monitor); monitors.delete(doc); }
+    }
+    for (const doc of currentDocs) {
+      if (monitors.has(doc)) continue;
+      // Eventos leves avisam quando um quadro ou documento precisa ser relido.
+      const aoCarregarQuadro = event => {
+        if (event.target === doc || /^(I?FRAME)$/.test(event.target?.tagName || '')) agendarVerificacao();
+      };
+      const aoAlterarCarregamento = () => { if (doc.readyState !== 'loading') agendarVerificacao(); };
+      doc.addEventListener('load', aoCarregarQuadro, true);
+      doc.addEventListener('readystatechange', aoAlterarCarregamento);
+      monitors.set(doc, {aoCarregarQuadro, aoAlterarCarregamento, observer:null});
+    }
+  }
+
+  /** Ativa temporizador e observadores durante a consulta e os desativa quando a execução termina. */
+  function atualizarMonitoramento() {
+    const active = !suspended && consultaEmAndamento();
+    if (active && timer === null) timer = window.setInterval(() => agendarVerificacao(), 800);
+    else if (!active && timer !== null) { window.clearInterval(timer); timer = null; }
+    for (const [doc, monitor] of monitors) {
+      if (active && !monitor.observer) {
+        monitor.observer = new MutationObserver(records => {
+          if (records.some(record => !alteracaoDoScript(record))) agendarVerificacao(80);
+        });
+        monitor.observer.observe(doc.documentElement, {childList:true, subtree:true, attributes:true,
+          attributeFilter:['class', 'style', 'disabled', 'aria-disabled', 'onclick']});
+      } else if (!active && monitor.observer) {
+        monitor.observer.disconnect(); monitor.observer = null;
+      }
+    }
+  }
+
+  /** Libera temporizadores, observadores e referências ao suspender ou sair da página. */
+  function encerrarMonitoramento() {
+    if (timer !== null) window.clearInterval(timer);
+    if (pendingTick !== null) window.clearTimeout(pendingTick);
+    timer = null; pendingTick = null; pendingTickDue = 0; focusAfterLoad = null;
+    for (const [doc, monitor] of monitors) removerMonitorDocumento(doc, monitor);
+    monitors.clear();
+  }
+
+  // 9. Consulta: preparação, navegação e conclusão
+
+  /** Informa se existe consulta em andamento, incluindo espera por carregamento. */
+  function consultaEmAndamento() {
+    return Boolean(state && state.phase !== 'done');
+  }
+
+  /** Exige documento carregado e controles disponíveis antes de preencher a consulta. */
+  function formularioPronto(view) {
+    return Boolean(view?.doc?.readyState === 'complete' && elementoVisivel(view.input) && elementoVisivel(view.consult));
+  }
+
+  /** Aguarda o carregamento e as requisições jQuery para evitar interromper o menu do ELO no Firefox. */
+  function navegacaoPronta(views) {
+    return views.every(view => {
+      try {
+        // load_menu() continua por AJAX depois do load. Navegar antes pode abortá-lo.
+        return view.doc.readyState === 'complete' && !(view.win.jQuery?.active > 0);
+      } catch { return false; } // Um quadro em troca de documento será relido.
+    });
+  }
+
+  /** Decide a próxima ação a partir da etapa e dos quadros atuais, sem clicar ou alterar o estado. */
+  function escolherProximaAcao(current, views) {
+    if (!current || current.phase === 'done') return null;
+    if (current.phase === 'query') {
+      const view = views.find(formularioPronto);
+      return view ? {kind:'query', view} : null;
+    }
+    if (current.phase === 'history') {
+      return views.some(v => v.historyTitle === current.title) ? {kind:'complete'} : null;
+    }
+    const detail = views.find(v => v.ase?.title === current.title);
+    if (detail) return {kind:'ase', node:detail.ase.node};
+    if (current.phase === 'detail' && views.some(v => v.noAseTitle === current.title)) {
+      return {kind:'noase'};
+    }
+    if (current.phase === 'results') {
+      const result = views.find(v => v.result);
+      if (result) return result.result.title === current.title
+        ? {kind:'result', node:result.result.node} : {kind:'mismatch'};
+    }
+    return null;
+  }
+
+  /** Captura alertas somente durante a ação fornecida e restaura os alertas originais mesmo se ela falhar. */
+  function executarCapturandoAlertas(wins, messages, action) {
+    const saved = [];
+    for (const win of new Set(wins)) {
+      try {
+        const original = win.alert;
+        win.alert = text => { messages.push(String(text ?? '').replace(/\s+/g, ' ').trim()); };
+        saved.push([win, original]);
+      } catch { /* quadro inacessível */ }
+    }
+    try { return action(); }
+    finally {
+      for (const [win, original] of saved) { try { win.alert = original; } catch { /* ignora */ } }
+    }
+  }
+
+  /** Inicia a consulta pelo painel ou retorna à tela inicial para continuá-la após a navegação. */
+  function iniciarConsulta(event) {
+    event.preventDefault();
+    if (consultaEmAndamento()) return;
+    const title = normalizarTitulo(panel.querySelector('[data-title]').value);
+    if (!tituloValido(title)) { atualizarBotoes(); focarCampoTitulo(); return; }
+    const view = coletarQuadros().find(v => elementoVisivel(v.input) && elementoVisivel(v.consult));
+    if (view) { enviarConsulta(view, title); return; }
+    const destination = validarEnderecoInicial(home);
+    if (!destination) { atualizarMensagemPainel('Abra uma vez a tela inicial de consulta para registrar o retorno automático.'); return; }
+    // Preserva o título antes de recarregar a tela inicial, sem clicar no histórico antigo.
+    state = {phase:'query', title, updated:Date.now()};
+    try {
+      salvarSessao();
+      fecharPopover();
+      atualizarMensagemPainel('Abrindo a consulta inicial. A nova pesquisa continuará automaticamente…');
+      atualizarBotoes();
+      atualizarMonitoramento();
+      window.location.assign(destination);
+    } catch (error) { interromperConsulta('Não foi possível iniciar a nova consulta. ' + error.message); }
+  }
+
+  /** Preenche inscrição e parâmetros nativos, captura recusas do ELO e aciona Consultar quando tudo estiver pronto. */
+  function enviarConsulta(view, title) {
+    if (!tituloValido(title)) {
+      informarFalha('Título inválido. Corrija os números para consultar.');
+      return;
+    }
+    const views = coletarQuadros();
+    if (!formularioPronto(view) || !navegacaoPronta(views)) {
+      // O body.onload do ELO inicializa e limpa o formulário. Aguarda antes de preencher.
+      const changed = state?.phase !== 'query' || state.title !== title;
+      if (changed) {
+        state = {phase:'query', title, updated:Date.now()};
+      }
+      try {
+        // O estado já salvo não muda durante as retentativas de carregamento.
+        if (changed) salvarSessao();
+        atualizarMensagemPainel('Aguardando o ELO concluir o carregamento interno para consultar…');
+        atualizarBotoes();
+        atualizarMonitoramento();
+        agendarVerificacao(100);
+      } catch (error) { interromperConsulta('Não foi possível preparar a consulta. ' + error.message); }
+      return;
+    }
+    const otherText = Array.from(view.input.form?.querySelectorAll('input[type="text"]') || [])
+      .some(input => input !== view.input && input.value.trim());
+    if (otherText) {
+      interromperConsulta('Limpe os outros filtros da página antes de consultar apenas pelo título.');
+      return;
+    }
+    home = validarEnderecoInicial(location.href);
+    state = {phase:'results', title, updated:Date.now()};
+    noResultSince = 0;
+    try {
+      salvarSessao();
+      view.input.focus();
+      const setter = Object.getOwnPropertyDescriptor(view.win.HTMLInputElement.prototype, 'value')?.set;
+      if (setter) setter.call(view.input, title);
+      else view.input.value = title;
+      // O ELO avisa título inválido com alert(). Captura a mensagem para tratá-la aqui.
+      const alerts = [];
+      const wins = views.map(item => item.win);
+      executarCapturandoAlertas(wins, alerts, () => {
+        view.input.dispatchEvent(new view.win.Event('input', {bubbles:true}));
+        // Não simula teclas: rotinas legadas podem exigir dados que Event não possui.
+        view.input.dispatchEvent(new view.win.Event('change', {bubbles:true}));
+        view.input.blur(); // Executa o onblur nativo do ELO antes da consulta.
+      });
+      if (alerts.length) { tratarConsultaRecusada(title, alerts); return; }
+      // A validação nativa pode cancelar ou corrigir a inscrição.
+      if (view.input.value.replace(/\D/g, '') !== title) {
+        throw new Error('O ELO alterou ou limpou o título digitado. Confira os números e tente novamente.');
+      }
+      const inscription = view.input.form?.querySelector('input[name="num_inscricao"]');
+      const cpf = view.input.form?.querySelector('input[name="num_cpf"]');
+      if (!inscription || !cpf) {
+        throw new Error('O formulário do ELO não disponibilizou os campos de Inscrição/CPF. Reabra a consulta.');
+      }
+      // Estes são os parâmetros do formulário que selecionam a pesquisa por título.
+      // Não depende de o onblur sintético atualizar os campos internos do ELO.
+      inscription.value = title;
+      cpf.value = '';
+      atualizarMensagemPainel('Consultando inscrição. Aguardando o resultado…');
+      atualizarBotoes();
+      if (!elementoVisivel(view.consult) || !elementoVisivel(view.input)) throw new Error('O formulário mudou. Tente novamente.');
+      fecharPopover();
+      atualizarMonitoramento();
+      executarCapturandoAlertas(wins, alerts, () => view.consult.click());
+      if (alerts.length) { tratarConsultaRecusada(title, alerts); return; }
+      agendarVerificacao();
+    } catch (error) { interromperConsulta('Consulta interrompida. ' + error.message); }
+  }
+
+  /** Apresenta o motivo da recusa e seleciona o título para facilitar sua correção. */
+  function tratarConsultaRecusada(title, alerts) {
+    const reason = alerts.filter(Boolean).join(' ') || 'motivo não informado.';
+    const message = `O ELO recusou o título ${formatarTitulo(title)}: ${reason}`;
+    interromperConsulta(message);
+    definirPainelRecolhido(false);
+    exibirPopover(message + '\nCorrija o título e consulte novamente.', panel?.ownerDocument, 'error');
+    focarCampoTitulo(true);
+  }
+
+  /** Interrompe a execução e navega para a tela inicial previamente validada. */
+  function voltarConsultaInicial() {
+    if (!home) { atualizarMensagemPainel('Abra a tela inicial de consulta para registrar o retorno.'); return; }
+    const destination = validarEnderecoInicial(home);
+    if (!destination) { interromperConsulta('Endereço de retorno inválido.'); return; }
+    interromperConsulta('Voltando à consulta inicial…');
+    window.location.assign(destination);
+  }
+
+  /** Interrompe a automação e mantém o painel disponível para correção ou nova consulta. */
+  function interromperConsulta(message) {
+    fecharPopover();
+    state = null;
+    noResultSince = 0;
+    atualizarMonitoramento();
+    try { salvarSessao(); } catch { /* Ainda permite parar se o armazenamento estiver indisponível. */ }
+    atualizarMensagemPainel(message);
+    atualizarBotoes();
+  }
+
+  /** Conclui e salva a consulta. Recebe separadamente o texto sem nome que pode ficar na sessão. */
+  function concluirConsulta(message, noAse = false, storedMessage = message) {
+    state.phase = 'done';
+    state.message = storedMessage;
+    state.updated = Date.now();
+    salvarSessao();
+    atualizarMensagemPainel(message);
+    if (noAse) {
+      definirPainelRecolhido(false);
+      exibirPopover(message, panel?.ownerDocument, 'success');
+    }
+    atualizarBotoes();
+  }
+
+  /** Interrompe com aviso de erro e devolve o foco ao campo para correção. */
+  function informarFalha(message) {
+    interromperConsulta(message);
+    definirPainelRecolhido(false);
+    exibirPopover(message, panel?.ownerDocument, 'error');
+    focarCampoTitulo(true);
+  }
+
+  // 10. Conferência de ASE 094 e ASE 167 por turno
+
+  /** Confere o histórico uma vez por documento/título. Retorna true, false ou "waiting" enquanto aguarda a tabela. */
+  function conferirHistorico(views) {
+    // Retorna true quando relatou o histórico, 'waiting' quando aguarda a tabela e false quando não havia o que fazer.
+    const history = views.find(view => view.doc && view.historyTitle
+      && (!consultaEmAndamento() || (state.phase === 'history' && state.title === view.historyTitle)));
+    // O cache evita avisos repetidos em repouso, mas não substitui uma nova consulta.
+    if (!history || (!consultaEmAndamento() && checkedHistories.get(history.doc) === history.historyTitle)) return false;
+    const found = lerAsesPorTurno(history.doc);
+    if (!found) {
+      // O documento já terminou de carregar. Só aguarda se a tabela ainda não existe.
+      let waiting = historyWaits.get(history.doc);
+      if (!waiting || waiting.title !== history.historyTitle) {
+        waiting = {title:history.historyTitle, since:Date.now()};
+        historyWaits.set(history.doc, waiting);
+      }
+      if (Date.now() - waiting.since < CONFIG.historyRetryMs) {
+        atualizarMensagemPainel('Lendo o histórico ASE…');
+        return 'waiting';
+      }
+    }
+    const absenceFound = lerAsesPorTurno(history.doc, CONFIG.absenceAseCode, ['ATIVO', 'INATIVO', 'FACULTADO']);
+    const message = montarRelatorioTurnos(history.historyTitle, found, obterNomeEleitor(history.doc, history.historyTitle), absenceFound);
+    // Uma pendência exige 094 ATIVO, INATIVO ou FACULTADO e ausência de 167 na mesma data.
+    const pending = Boolean(found && absenceFound?.some((absence, index) => absence && !found[index]));
+    const tone = found?.every(Boolean) ? 'success'
+      : !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
+    const input = panel?.querySelector('[data-title]');
+    // Só considera ausência confirmada quando a leitura dos dois turnos foi possível.
+    const noAbsence = Boolean(absenceFound && !absenceFound.some(Boolean));
+    // Preserva outro título que já esteja sendo preparado para a próxima consulta.
+    const clearInput = (Boolean(found?.some(Boolean)) || noAbsence) && (!input || !input.value.trim()
+      || normalizarTitulo(input.value) === history.historyTitle);
+    const saveCleared = clearInput && state?.title === history.historyTitle && !state.clearTitle;
+    if (saveCleared) state.clearTitle = true;
+    // O nome do eleitor aparece só na tela; o que fica salvo na sessão não o contém.
+    if (consultaEmAndamento()) concluirConsulta(message, false, montarRelatorioTurnos(history.historyTitle, found, '', absenceFound));
+    else {
+      atualizarMensagemPainel(message);
+      if (saveCleared) salvarSessao();
+    }
+    exibirPopover(message, history.doc, tone);
+    // Marca a leitura após concluir a atualização do aviso.
+    checkedHistories.set(history.doc, history.historyTitle);
+    historyWaits.delete(history.doc);
+    if (clearInput) {
+      if (input) input.value = '';
+      atualizarBotoes();
+      definirPainelRecolhido(false);
+      focarCampoTitulo();
+    }
+    return true;
+  }
+
+  // 11. Espera, mensagens sem resultado e limites por etapa
+
+  /** Busca a mensagem de consulta sem resultado, ignorando o painel e os popovers do script. */
+  function possuiMensagemSemResultado(doc) {
     if (doc.readyState !== 'complete') return false;
     // Evita confundir mensagens do painel, alertas antigos ou textos de outros campos.
     return Array.from(doc.querySelectorAll('td,p,div,span,[role="alert"]')).some(node => {
       if (node.closest('#' + PANEL + ',[data-elo-ase-popover]')) return false;
       const text = node.textContent.replace(/\s+/g, ' ').trim();
       // Consulta estilos e dimensões apenas quando o texto pode ser a mensagem esperada.
-      return CONFIG.noResultPattern.test(text) && visible(node);
+      return CONFIG.noResultPattern.test(text) && elementoVisivel(node);
     });
   }
 
-  function failWith(message) {
-    stop(message);
-    setCollapsed(false);
-    showPopover(message, panel?.ownerDocument, 'error');
-    focusTitleInput(true);
-  }
-
-  function checkWaiting(views) {
-    if (checkStepTimeout()) return;
+  /** Trata a espera e exige persistência da mensagem sem resultado antes de concluir uma falha. */
+  function verificarEspera(views) {
+    if (verificarPrazoEtapa()) return;
     if (state.phase === 'results') {
-      if (views.some(view => noResultMessage(view.doc))) {
+      if (views.some(view => possuiMensagemSemResultado(view.doc))) {
         // Exige que o aviso persista, para não confundir com a tela ainda carregando.
         noResultSince = noResultSince || Date.now();
         if (Date.now() - noResultSince >= CONFIG.noResultDelayMs) {
-          failWith(`O ELO não retornou nenhum eleitor para o título ${formatTitle(state.title)}. Confira o número digitado.`);
+          informarFalha(`O ELO não retornou nenhum eleitor para o título ${formatarTitulo(state.title)}. Confira o número digitado.`);
         }
         return;
       }
@@ -809,100 +906,106 @@
     }
   }
 
-  function checkStepTimeout() {
-    if (!busy() || Date.now() - state.updated <= CONFIG.stepTimeoutMs) return false;
-    failWith(TIMEOUT_MESSAGES[state.phase] || 'Tempo esgotado. Confira as mensagens do ELO e tente novamente.');
+  /** Interrompe etapas que ultrapassaram o prazo específico e informa o motivo correspondente. */
+  function verificarPrazoEtapa() {
+    if (!consultaEmAndamento() || Date.now() - state.updated <= CONFIG.stepTimeoutMs) return false;
+    informarFalha(TIMEOUT_MESSAGES[state.phase] || 'Tempo esgotado. Confira as mensagens do ELO e tente novamente.');
     return true;
   }
 
-  function tick() {
+  // 12. Ciclo de execução e inicialização
+
+  /** Executa um ciclo da automação com proteção contra reentrada e nova leitura antes de cada clique. */
+  function executarCiclo() {
     if (suspended || running) return;
     running = true;
     try {
-      const views = collect();
-      syncMonitoring(views);
+      const views = coletarQuadros();
+      sincronizarMonitores(views);
       if (!home && (views.some(v => v.input)
         || new URL(location.href).searchParams.get('url') === '/sae/jsp/ConsultaAtendimento.jsp')) {
-        home = safeHome(location.href);
-        try { store(); } catch { setStatus('O navegador precisa permitir armazenamento da sessão para a automação.'); }
+        home = validarEnderecoInicial(location.href);
+        try { salvarSessao(); } catch { atualizarMensagemPainel('O navegador precisa permitir armazenamento da sessão para a automação.'); }
       }
-      mount(views);
+      montarPainel(views);
       // O ajuste visual do ELO nunca deve impedir a montagem ou a automação.
       for (const view of views) {
         if (!view.historyTitle) continue;
-        try { fixHistoryBackButton(view.doc); }
+        try { corrigirBotaoVoltarHistorico(view.doc); }
         catch (error) { console.warn('[ELO ASE] Não foi possível ajustar a posição do botão Voltar.', error); }
       }
       if (focusAfterLoad?.readyState === 'complete' && panel?.ownerDocument === focusAfterLoad) {
-        focusTitleInput(); focusAfterLoad = null;
+        focarCampoTitulo(); focusAfterLoad = null;
       }
-      if (!busy()) {
-        if (verifyHistory(views) === 'waiting') scheduleTick(300);
+      if (!consultaEmAndamento()) {
+        if (conferirHistorico(views) === 'waiting') agendarVerificacao(300);
         return;
       }
-      if (!validState(state)) { stop('Tempo esgotado. Confira as mensagens do ELO e tente novamente.'); return; }
-      if (checkStepTimeout()) return;
-      const action = chooseAction(state, views);
-      if (!action) { checkWaiting(views); return; }
+      if (!estadoValido(state)) { interromperConsulta('Tempo esgotado. Confira as mensagens do ELO e tente novamente.'); return; }
+      if (verificarPrazoEtapa()) return;
+      const action = escolherProximaAcao(state, views);
+      if (!action) { verificarEspera(views); return; }
       if (action.kind === 'query') {
-        submitQuery(action.view, state.title);
+        enviarConsulta(action.view, state.title);
         return;
       }
       if (action.kind === 'mismatch') {
-        stop('O primeiro resultado tem inscrição diferente. Automação interrompida para conferência.');
+        interromperConsulta('O primeiro resultado tem inscrição diferente. Automação interrompida para conferência.');
         return;
       }
       if (action.kind === 'complete') {
-        const outcome = verifyHistory(views);
-        if (outcome === 'waiting') { scheduleTick(300); return; }
-        if (!outcome) finish('Histórico ASE carregado. Use o botão acima para voltar.');
+        const outcome = conferirHistorico(views);
+        if (outcome === 'waiting') { agendarVerificacao(300); return; }
+        if (!outcome) concluirConsulta('Histórico ASE carregado. Use o botão acima para voltar.');
         return;
       }
       if (action.kind === 'noase') {
         const empty = CONFIG.turns.map(() => false);
         const detail = views.find(view => view.noAseTitle === state.title);
-        const name = detail ? electorName(detail.doc, state.title) : '';
+        const name = detail ? obterNomeEleitor(detail.doc, state.title) : '';
         const input = panel?.querySelector('[data-title]');
-        const clearInput = !input || !input.value.trim() || normalizeTitle(input.value) === state.title;
+        const clearInput = !input || !input.value.trim() || normalizarTitulo(input.value) === state.title;
         if (clearInput) state.clearTitle = true;
-        finish(turnReport(state.title, empty, name, empty), true,
-          turnReport(state.title, empty, '', empty));
-        if (clearInput) clearTitleInput();
+        concluirConsulta(montarRelatorioTurnos(state.title, empty, name, empty), true,
+          montarRelatorioTurnos(state.title, empty, '', empty));
+        if (clearInput) limparCampoTitulo();
         return;
       }
       // Busca um elemento atual e valida de novo antes de acionar o evento nativo.
-      const freshViews = collect();
-      if (!navigationReady(freshViews)) {
-        setStatus('Aguardando o ELO concluir o carregamento interno antes de avançar…');
-        scheduleTick(100);
+      const freshViews = coletarQuadros();
+      if (!navegacaoPronta(freshViews)) {
+        atualizarMensagemPainel('Aguardando o ELO concluir o carregamento interno antes de avançar…');
+        agendarVerificacao(100);
         return;
       }
-      const fresh = chooseAction(state, freshViews);
-      if (!fresh || fresh.kind !== action.kind || !visible(fresh.node)) return;
+      const fresh = escolherProximaAcao(state, freshViews);
+      if (!fresh || fresh.kind !== action.kind || !elementoVisivel(fresh.node)) return;
       state.phase = action.kind === 'result' ? 'detail' : 'history';
       state.updated = Date.now();
-      store();
-      setStatus(action.kind === 'result' ? 'Abrindo o primeiro resultado. Aguardando o link ASE…'
+      salvarSessao();
+      atualizarMensagemPainel(action.kind === 'result' ? 'Abrindo o primeiro resultado. Aguardando o link ASE…'
         : 'Abertura do histórico ASE solicitada. Use o botão acima para voltar.');
-      updateButtons();
+      atualizarBotoes();
       fresh.node.click();
-      scheduleTick();
+      agendarVerificacao();
     } catch (error) {
       console.warn('[ELO ASE] Erro inesperado.', error);
       const detail = (typeof error === 'string' ? error
         : typeof error?.message === 'string' ? error.message : '').trim() || 'motivo não informado';
-      stop(`Automação interrompida por erro inesperado: ${detail}\nConfira o console (F12) para mais detalhes ou tente novamente.`);
+      interromperConsulta(`Automação interrompida por erro inesperado: ${detail}\nConfira o console (F12) para mais detalhes ou tente novamente.`);
     }
-    finally { running = false; refreshActivity(); }
+    finally { running = false; atualizarMonitoramento(); }
   }
 
-  function boot() {
-    restore();
+  /** Restaura a sessão, executa o primeiro ciclo e trata saída e retorno pelo histórico do navegador. */
+  function inicializar() {
+    restaurarSessao();
     if (state) statusText = state.phase === 'done' ? (state.message || 'Use Voltar à consulta inicial para uma nova pesquisa.')
       : 'Continuando a consulta. Aguardando a página carregar…';
-    tick();
-    window.addEventListener('pagehide', () => { suspended = true; cleanupMonitoring(); clearPopover(); });
-    window.addEventListener('pageshow', e => { if (e.persisted) { suspended = false; tick(); focusTitleInput(); } });
+    executarCiclo();
+    window.addEventListener('pagehide', () => { suspended = true; encerrarMonitoramento(); fecharPopover(); });
+    window.addEventListener('pageshow', e => { if (e.persisted) { suspended = false; executarCiclo(); focarCampoTitulo(); } });
   }
-  boot();
+
+  inicializar();
 })();
