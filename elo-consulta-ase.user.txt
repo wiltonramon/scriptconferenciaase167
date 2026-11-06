@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.34
+// @version      1.5.35
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -41,6 +41,10 @@
   const LIMIT = 120000;
   // Cadastre aqui os conjuntos de turnos. A conferência usa somente o conjunto escolhido.
   const ELEICOES = {
+    2022: [
+      {label:'1º turno', date:'02/10/2022'},
+      {label:'2º turno', date:'30/10/2022'}
+    ],
     2024: [
       {label:'1º turno', date:'06/10/2024'}
     ],
@@ -439,10 +443,21 @@
     }
     const submit = panel.querySelector('[data-submit]');
     submit.disabled = active || !valid;
-    submit.style.opacity = submit.disabled ? '0.55' : '1';
+    submit.textContent = active ? 'Consultando…' : 'Consultar ASE';
+    submit.style.opacity = active ? '0.8' : submit.disabled ? '0.45' : '1';
     submit.style.cursor = submit.disabled ? 'not-allowed' : 'pointer';
-    panel.querySelector('[data-cancel]').disabled = !active;
-    panel.querySelector('[data-return]').disabled = !home;
+    const cancel = panel.querySelector('[data-cancel]');
+    cancel.disabled = !active;
+    cancel.style.opacity = cancel.disabled ? '0.45' : '1';
+    cancel.style.cursor = cancel.disabled ? 'not-allowed' : 'pointer';
+    const back = panel.querySelector('[data-return]');
+    back.disabled = !home;
+    back.style.opacity = back.disabled ? '0.45' : '1';
+    back.style.cursor = back.disabled ? 'not-allowed' : 'pointer';
+    const activity = panel.querySelector('[data-activity]');
+    activity.textContent = active ? 'Em consulta' : 'Pronto';
+    activity.style.background = active ? '#dceaf8' : '#e9eff6';
+    activity.style.color = active ? '#174975' : '#425e7d';
   }
 
   /** Remove o atalho anterior, inclusive quando o ELO substitui o documento do painel. */
@@ -525,102 +540,91 @@
   // A chave "raiz" identifica o próprio painel; as demais identificam seus controles.
   const ESTILOS_PAINEL = Object.freeze({
     raiz: `
-      position: fixed;
-      top: 80px;
-      right: 20px;
-      width: 292px;
-      max-width: calc(100vw - 24px);
-      z-index: 2147483647;
-      background: #fff;
-      color: #182333;
-      border: 1px solid #b7c6d5;
-      border-radius: 10px;
-      box-shadow: 0 5px 24px #0003;
-      font: 14px Arial,sans-serif;
-      box-sizing: border-box;
+      position: fixed; top: 80px; right: 20px;
+      width: 292px; max-width: calc(100vw - 24px);
+      z-index: 2147483647; box-sizing: border-box;
+      background: #fff; color: #172b45;
+      border: 1px solid #d9e2ee; border-radius: 14px;
+      box-shadow: 0 12px 36px #16345424, 0 2px 6px #1634540d;
+      font: 13px/1.45 Arial,sans-serif; text-align: left;
       overflow: hidden;
-      text-align: left;
     `,
     '[data-handle]': `
-      background: #174975;
-      color: white;
-      padding: 12px 14px;
-      cursor: move;
-      touch-action: none;
-      font-weight: bold;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; padding: 12px;
+      background: #f7f9fc; border-bottom: 1px solid #e7edf5;
+      cursor: move; touch-action: none;
     `,
+    '[data-brand]': `display: flex; align-items: center; gap: 9px; min-width: 0;`,
+    '[data-brand-mark]': `
+      display: flex; align-items: center; justify-content: center;
+      flex: 0 0 32px; width: 32px; height: 32px;
+      border-radius: 9px; background: #174975; color: #fff;
+      font: 700 10px/1 Arial,sans-serif; letter-spacing: .5px;
+    `,
+    '[data-panel-title]': `display: block; font: 700 14px/1.3 Arial,sans-serif; color: #183451;`,
+    '[data-election]': `display: block; margin-top: 3px; font: 12px/1.3 Arial,sans-serif; color: #5c7088;`,
     '[data-collapse]': `
-      background: transparent;
-      color: white;
-      border: 0;
-      font-size: 20px;
-      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      flex: 0 0 30px; width: 30px; height: 30px;
+      margin: 0; padding: 0; appearance: none;
+      background: #fff; color: #4b627d;
+      border: 1px solid #dce4ee; border-radius: 8px;
+      font: 20px/1 Arial,sans-serif; cursor: pointer;
     `,
-    '[data-body]': `padding: 14px;`,
-    'label[for="elo-ase-titulo"]': `
-      display: block;
-      margin-bottom: 7px;
-    `,
+    '[data-body]': `padding: 12px; max-height: calc(100vh - 156px); overflow-y: auto; box-sizing: border-box;`,
+    '[data-form]': `margin: 0; padding: 0;`,
+    '[data-input-heading]': `display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;`,
+    'label[for="elo-ase-titulo"]': `display: block; margin: 0; color: #253d58; font: 700 12px/1.4 Arial,sans-serif;`,
+    '[data-shortcut]': `font: 10px/1.4 Arial,sans-serif; color: #64758a; white-space: nowrap;`,
     '[data-title-wrapper]': `position: relative;`,
     '[data-title]': `
-      box-sizing: border-box;
-      width: 100%;
-      font: 18px Arial;
-      padding: 9px 38px 9px 9px;
-      border: 1px solid #a6b6c5;
-      border-radius: 5px;
+      box-sizing: border-box; width: 100%; min-width: 0;
+      height: 44px; padding: 10px 38px 10px 11px;
+      border: 1px solid #a6b6c5; border-radius: 9px;
+      background: #f8fafc; color: #172b45;
+      font: 19px/1.2 monospace; font-variant-numeric: tabular-nums;
     `,
     '[data-clear-title]': `
-      position: absolute;
-      right: 4px;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 30px;
-      height: 30px;
-      padding: 0;
-      border: 0;
-      border-radius: 4px;
-      background: transparent;
-      color: #526577;
-      font: 20px Arial,sans-serif;
-      cursor: pointer;
+      position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+      width: 28px; height: 28px; margin: 0; padding: 0; appearance: none;
+      border: 0; border-radius: 6px; background: transparent; color: #60748e;
+      font: 21px/1 Arial,sans-serif; cursor: pointer;
     `,
     '[data-title-feedback]': `
-      font-size: 12px;
-      line-height: 1.4;
-      margin: 6px 0 0;
-      color: #526577;
+      min-height: 16px; margin: 6px 0 0;
+      font: 11px/1.45 Arial,sans-serif; color: #526577;
     `,
     '[data-submit]': `
-      width: 100%;
-      padding: 10px;
-      margin-top: 10px;
-      border: 0;
-      border-radius: 5px;
-      background: #174975;
-      color: white;
-      font-weight: bold;
-      cursor: pointer;
+      box-sizing: border-box; width: 100%; min-height: 38px;
+      margin: 9px 0 0; padding: 9px 12px; appearance: none;
+      border: 1px solid #174975; border-radius: 8px;
+      background: #174975; color: #fff;
+      font: 700 13px/1.4 Arial,sans-serif; cursor: pointer;
     `,
+    '[data-actions]': `display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;`,
     '[data-return]': `
-      width: 100%;
-      padding: 9px;
-      margin-top: 8px;
-      cursor: pointer;
+      box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px;
+      margin: 0; padding: 6px 8px; appearance: none;
+      border: 1px solid #dce4ee; border-radius: 7px;
+      background: #f7f9fc; color: #344f6d;
+      font: 600 12px/1.4 Arial,sans-serif; cursor: pointer;
     `,
     '[data-cancel]': `
-      width: 100%;
-      padding: 7px;
-      margin-top: 6px;
-      cursor: pointer;
+      box-sizing: border-box; width: 100%; min-width: 0; min-height: 32px;
+      margin: 0; padding: 6px 8px; appearance: none;
+      border: 1px solid #f0d5d5; border-radius: 7px;
+      background: #fff7f7; color: #9d3434;
+      font: 600 12px/1.4 Arial,sans-serif; cursor: pointer;
     `,
+    '[data-status-section]': `margin-top: 12px; padding: 10px; border: 1px solid #e5ebf3; border-radius: 9px; background: #f8fafc;`,
+    '[data-status-heading]': `display: flex; align-items: center; justify-content: space-between; gap: 8px;`,
+    '[data-status-label]': `font: 700 10px/1.4 Arial,sans-serif; letter-spacing: .7px; text-transform: uppercase; color: #61748b;`,
+    '[data-activity]': `padding: 2px 6px; border-radius: 4px; background: #e9eff6; color: #425e7d; font: 600 10px/1.4 Arial,sans-serif; white-space: nowrap;`,
     '[data-status]': `
-      font-size: 12px;
-      line-height: 1.45;
-      margin: 12px 0 0;
+      margin: 7px 0 0; max-height: 150px; overflow-y: auto;
+      font: 12px/1.55 Arial,sans-serif; color: #344b65;
+      white-space: pre-line; overflow-wrap: anywhere;
     `
   });
 
@@ -648,38 +652,41 @@
   function obterHtmlPainel() {
     return `
       <div data-handle>
-        Consulta rápida ASE
-        <button type="button" data-collapse aria-label="Recolher painel">−</button>
+        <div data-brand>
+          <span data-brand-mark aria-hidden="true">ASE</span>
+          <div>
+            <strong data-panel-title>Consulta ASE</strong>
+            <span data-election></span>
+          </div>
+        </div>
+        <button type="button" data-collapse title="Minimizar painel" aria-label="Minimizar painel">−</button>
       </div>
       <div data-body>
         <form data-form>
-          <label for="elo-ase-titulo">Título de eleitor</label>
-          <div data-title-wrapper>
-            <input
-              id="elo-ase-titulo"
-              aria-describedby="elo-ase-titulo-feedback"
-              data-title
-              type="text"
-              inputmode="numeric"
-              autocomplete="off"
-              maxlength="20"
-              placeholder="0000 0000 0000"
-            >
-            <button
-              data-clear-title
-              type="button"
-              aria-label="Limpar título"
-              title="Limpar título (Esc)"
-            >×</button>
+          <div data-input-heading>
+            <label for="elo-ase-titulo">Título de eleitor</label>
+            <span data-shortcut>Esc para limpar</span>
           </div>
-          <p id="elo-ase-titulo-feedback" data-title-feedback aria-live="polite">
-            Digite os 12 dígitos do título.
-          </p>
+          <div data-title-wrapper>
+            <input id="elo-ase-titulo" data-title type="text" inputmode="numeric"
+              aria-describedby="elo-ase-titulo-feedback" autocomplete="off"
+              maxlength="20" placeholder="0000 0000 0000">
+            <button data-clear-title type="button" aria-label="Limpar título" title="Limpar título (Esc)">×</button>
+          </div>
+          <p id="elo-ase-titulo-feedback" data-title-feedback aria-live="polite">Digite os 12 dígitos do título.</p>
           <button disabled data-submit type="submit">Consultar ASE</button>
         </form>
-        <button data-return type="button">Voltar à consulta inicial</button>
-        <button data-cancel type="button">Parar automação</button>
-        <p data-status role="status" aria-live="polite"></p>
+        <div data-actions>
+          <button data-return type="button" title="Voltar à consulta inicial" aria-label="Voltar à consulta inicial">Voltar</button>
+          <button data-cancel type="button" title="Parar automação" aria-label="Parar automação">Parar</button>
+        </div>
+        <div data-status-section>
+          <div data-status-heading>
+            <span data-status-label>Acompanhamento</span>
+            <span data-activity>Pronto</span>
+          </div>
+          <p data-status role="status" aria-live="polite" tabindex="0"></p>
+        </div>
       </div>
     `;
   }
@@ -699,6 +706,7 @@
     elemento.setAttribute('aria-label', 'Consulta rápida ASE');
     elemento.innerHTML = obterHtmlPainel();
     aplicarEstilosPainel(elemento);
+    elemento.querySelector('[data-election]').textContent = `${ELEICAO} · ${CONFIG.turns.length} ${CONFIG.turns.length === 1 ? 'turno' : 'turnos'}`;
     return elemento;
   }
 
