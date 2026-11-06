@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas dos dois turnos das Eleições Gerais de 2026.
 
-**Versão atual: 1.5.32.**
+**Versão atual: 1.5.33.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -39,7 +39,8 @@ Se houver outros filtros preenchidos no formulário original do ELO, o script pe
 - **Validação durante a digitação:** verifica o formato, o código de UF e os dígitos verificadores. O botão Consultar ASE permanece desativado enquanto a entrada estiver incompleta ou inválida. Essa validação não confirma a existência do cadastro no ELO.
 - **Limpar título:** use o botão **×** à direita do campo ou pressione **Esc** com o foco no campo.
 - **Mover painel:** arraste pelo cabeçalho. A posição é salva na sessão da aba e reaplicada ao recriar o painel.
-- **Recolher ou expandir:** use o botão no cabeçalho.
+- **Minimizar:** use o botão no cabeçalho. O painel inteiro é ocultado e fica somente uma seta no canto superior direito.
+- **Restaurar:** clique na seta para recuperar o tamanho normal, a posição anterior e o título que estava digitando. Enquanto minimizado, o painel não é reaberto automaticamente pelos resultados da consulta, e a seta acompanha a troca dos quadros internos do ELO.
 - **Parar automação:** interrompe a consulta em andamento.
 - **Voltar à consulta inicial:** retorna ao endereço registrado anteriormente.
 
@@ -128,12 +129,13 @@ O script permanece em um arquivo único, com funções próprias nomeadas em por
 | Criação e montagem do painel | `criarPainel` e `montarPainel` |
 | Eventos e atalho Esc | `registrarEventosPainel` e `tratarEscapeNoTitulo` |
 | Posição e arraste | `restaurarPosicaoPainel` e `habilitarArrastePainel` |
+| Minimização e restauração pela seta | `definirPainelRecolhido`, `exibirBotaoRestaurarPainel`, `removerBotaoRestaurarPainel` e `ESTILO_BOTAO_RESTAURAR_PAINEL` |
 | Popovers, botão de fechar e temporizador | `exibirPopover` e `fecharPopover` |
 | Sequência da automação | `escolherProximaAcao` e `executarCiclo` |
 
 Os nomes das APIs externas, seletores do ELO e propriedades salvas na sessão são preservados por compatibilidade. Alterações em `KEY` ou no formato persistido exigem cuidado para não perder a continuidade de consultas iniciadas.
 
-Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.32 organiza o HTML, os estilos, os eventos e o arraste do painel em funções específicas.
+Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.33 adiciona a minimização para uma seta no canto superior direito, com restauração do tamanho e da posição anteriores.
 
 ## Escopo e dados temporários
 
