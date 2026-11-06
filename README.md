@@ -1,8 +1,8 @@
 # ELO | Consulta rápida do histórico ASE
 
-Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas dos dois turnos das Eleições Gerais de 2026.
+Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.33.**
+**Versão atual: 1.5.34.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -47,17 +47,32 @@ Se houver outros filtros preenchidos no formulário original do ELO, o script pe
 O campo do título é limpo automaticamente quando:
 
 - É encontrado ASE 167 em pelo menos um dos turnos.
-- A leitura confirma que não há ASE 094 em nenhum dos dois turnos.
+- A leitura confirma que não há ASE 094 em nenhum dos turnos selecionados.
 - A tela de detalhes confirma que o eleitor não possui o link de histórico ASE.
 
 Outro título que já esteja sendo preparado para a próxima consulta é preservado. Uma falha de leitura não é considerada confirmação de ausência de registros.
 
+## Selecionar a eleição
+
+Os conjuntos de datas ficam no objeto `ELEICOES`, no início do código. Para alternar entre eles, mude somente a constante `ELEICAO`, salve o script instalado e recarregue o ELO:
+
+```javascript
+const ELEICAO = 2026; // padrão: os dois turnos de 2026
+```
+
+Para conferir apenas o primeiro turno de 2024, use `const ELEICAO = 2024;`. O conjunto de 2024 contém somente esse turno. Para adicionar outra eleição, cadastre uma nova chave e sua lista de turnos em `ELEICOES` e depois selecione a chave em `ELEICAO`.
+
+Ao trocar de eleição, consultas e resultados da sessão anterior não são retomados. O endereço de retorno e a posição do painel são preservados.
+
 ## Datas e regras de conferência
 
-| Turno | Data de ocorrência | Códigos conferidos |
-| --- | --- | --- |
-| 1º Turno | 04/10/2026 | ASE 094 e ASE 167 |
-| 2º Turno | 25/10/2026 | ASE 094 e ASE 167 |
+| Conjunto | Turno | Data de ocorrência | Códigos conferidos |
+| --- | --- | --- | --- |
+| 2024 | 1º Turno | 06/10/2024 | ASE 094 e ASE 167 |
+| 2026 (padrão) | 1º Turno | 04/10/2026 | ASE 094 e ASE 167 |
+| 2026 (padrão) | 2º Turno | 25/10/2026 | ASE 094 e ASE 167 |
+
+Somente as datas do conjunto escolhido em `ELEICAO` participam da conferência. Registros de outras datas não completam os turnos selecionados.
 
 A busca usa a coluna **Ocorrência**, e exige que código e data estejam na mesma linha da tabela. A data de processamento não é usada.
 
@@ -65,9 +80,9 @@ A busca usa a coluna **Ocorrência**, e exige que código e data estejam na mesm
 - **ASE 167:** é conferida a existência do código na data correspondente, sem filtro de situação.
 - **Pendência por turno:** existe quando há ASE 094 em uma das situações aceitas e não há ASE 167 na mesma data. O aviso orienta: `Registre o ASE 167 no 1º Turno, se for o caso.` ou o equivalente para o 2º Turno.
 - **Sem ASE 094 em um turno:** o script informa a ausência desse registro e não recomenda lançar ASE 167 para esse turno.
-- **ASE 167 nos dois turnos:** o resultado informa que não há registros a serem feitos, independentemente da existência de ASE 094.
+- **ASE 167 em todos os turnos selecionados:** o resultado informa que não há registros a serem feitos, independentemente da existência de ASE 094.
 
-As datas são configuradas para as Eleições Gerais de 2026. O script não identifica automaticamente as datas de outras eleições.
+O script usa a configuração escolhida no código; não identifica automaticamente o ano ou as datas da eleição.
 
 ## Avisos, cores e duração
 
@@ -75,12 +90,23 @@ As datas são configuradas para as Eleições Gerais de 2026. O script não iden
 
 | Cor | Significado |
 | --- | --- |
-| Verde | ASE 167 encontrado nos dois turnos, ou conferência concluída sem pendências segundo as regras de ASE 094 e 167. Inclui o caso confirmado de eleitor sem histórico ASE. |
+| Verde | ASE 167 encontrado em todos os turnos selecionados, ou conferência concluída sem pendências segundo as regras de ASE 094 e 167. Inclui o caso confirmado de eleitor sem histórico ASE. |
 | Laranja | Há ASE 094 e falta ASE 167 em pelo menos um turno correspondente. O texto identifica os turnos e apresenta orientação condicional de lançamento. |
 | Amarela | Não foi possível concluir a conferência da tabela ou da situação dos registros. É necessária conferência manual. |
 | Vermelha | Aviso de falha, como recusa do título pelo ELO, consulta sem resultado ou prazo de etapa excedido. |
 
-Quando os dois ASE 167 são identificados, o aviso é verde mesmo que a conferência do ASE 094 não esteja disponível. Nome e título identificam o resultado; se o nome não for obtido, aparece `ELEITOR(A): nome não identificado`.
+Quando o ASE 167 é identificado em todos os turnos selecionados, o aviso é verde mesmo que a conferência do ASE 094 não esteja disponível. Nome e título identificam o resultado; se o nome não for obtido, aparece `ELEITOR(A): nome não identificado`.
+
+### Exemplo: apenas o primeiro turno de 2024
+
+Com `ELEICAO = 2024`, o sucesso é apresentado no singular:
+
+```text
+ELEITOR(A): [nome do eleitor]
+TÍTULO: [título consultado]
+ASE 167 registrado no 1º Turno (06/10/2024).
+Não há registros a serem feitos.
+```
 
 ### Exemplo: ASE 167 nos dois turnos
 
@@ -119,7 +145,9 @@ O script permanece em um arquivo único, com funções próprias nomeadas em por
 
 | O que alterar | Onde procurar |
 | --- | --- |
-| Códigos ASE, datas dos turnos e tempos de espera | `CONFIG` |
+| Eleição selecionada | `ELEICAO` |
+| Conjuntos de turnos e datas disponíveis | `ELEICOES` |
+| Códigos ASE e tempos de espera | `CONFIG` |
 | Mensagens de prazo excedido | `TIMEOUT_MESSAGES` |
 | Leitura dos registros por código, situação e data | `lerAsesPorTurno` |
 | Cores, pendências e limpeza automática do título | `conferirHistorico` e o tratamento de eleitor sem histórico em `executarCiclo` |
@@ -135,7 +163,7 @@ O script permanece em um arquivo único, com funções próprias nomeadas em por
 
 Os nomes das APIs externas, seletores do ELO e propriedades salvas na sessão são preservados por compatibilidade. Alterações em `KEY` ou no formato persistido exigem cuidado para não perder a continuidade de consultas iniciadas.
 
-Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.33 adiciona a minimização para uma seta no canto superior direito, com restauração do tamanho e da posição anteriores.
+Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.34 permite alternar entre conjuntos de eleições e apresenta a mensagem de sucesso no singular quando apenas um turno está configurado.
 
 ## Escopo e dados temporários
 
@@ -143,7 +171,7 @@ Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos ar
 - Depende da sessão autenticada e do acesso regular do usuário ao ELO.
 - Consulta e confere registros. Não lança ASE nem altera o cadastro eleitoral.
 - Não utiliza bibliotecas externas nem envia os dados consultados para outros serviços.
-- Usa `sessionStorage` para manter título, etapa, resultado, endereço de retorno e posição do painel entre navegações. O nome exibido nos relatórios é omitido da mensagem salva na sessão.
+- Usa `sessionStorage` para manter eleição selecionada, título, etapa, resultado, endereço de retorno e posição do painel entre navegações. O nome exibido nos relatórios é omitido da mensagem salva na sessão.
 - Confere as linhas disponíveis na tabela carregada; não percorre automaticamente eventual paginação do histórico.
 
 ## Licença
