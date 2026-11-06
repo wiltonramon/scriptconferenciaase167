@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.32
+// @version      1.5.33
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -19,6 +19,7 @@
    * - lerAsesPorTurno/conferirHistorico: leitura, pendências, cores e limpeza do título.
    * - obterHtmlPainel/ESTILOS_PAINEL: estrutura e estilos do painel.
    * - registrarEventosPainel/habilitarArrastePainel: controles, atalhos e arraste.
+   * - definirPainelRecolhido/exibirBotaoRestaurarPainel: minimização e restauração.
    * - exibirPopover: apresentação dos avisos.
    * - escolherProximaAcao/executarCiclo: sequência de navegação no ELO.
    *
@@ -65,6 +66,7 @@
   let state = null;
   let home = null;
   let panel = null;
+  let botaoRestaurarPainel = null;
   let statusText = 'Informe o título e clique em Consultar ASE.';
   let running = false;
   let timer = null;
@@ -422,19 +424,52 @@
     panel.querySelector('[data-return]').disabled = !home;
   }
 
-  /** Recolhe ou expande o conteúdo do painel e atualiza o rótulo acessível do botão. */
-  function definirPainelRecolhido(collapsed) {
+  /** Remove o atalho anterior, inclusive quando o ELO substitui o documento do painel. */
+  function removerBotaoRestaurarPainel() {
+    botaoRestaurarPainel?.remove();
+    botaoRestaurarPainel = null;
+  }
+
+  /** Exibe somente uma seta no canto superior direito, sem deslocar o painel original. */
+  function exibirBotaoRestaurarPainel() {
+    const doc = panel?.ownerDocument;
+    if (doc?.body?.tagName !== 'BODY') return;
+    if (botaoRestaurarPainel?.isConnected && botaoRestaurarPainel.ownerDocument === doc) return;
+    removerBotaoRestaurarPainel();
+    botaoRestaurarPainel = doc.createElement('button');
+    botaoRestaurarPainel.type = 'button';
+    botaoRestaurarPainel.textContent = '←';
+    botaoRestaurarPainel.title = 'Restaurar painel de consulta ASE';
+    botaoRestaurarPainel.setAttribute('aria-label', 'Restaurar painel de consulta ASE');
+    botaoRestaurarPainel.setAttribute('data-elo-ase-restaurar', '');
+    botaoRestaurarPainel.style.cssText = ESTILO_BOTAO_RESTAURAR_PAINEL;
+    botaoRestaurarPainel.addEventListener('click', () => {
+      definirPainelRecolhido(false, true);
+      focarCampoTitulo();
+    });
+    isolarEventosDoScript(botaoRestaurarPainel);
+    doc.body.append(botaoRestaurarPainel);
+  }
+
+  /** Preserva a minimização escolhida pelo usuário; somente a restauração manual a desfaz. */
+  function definirPainelRecolhido(recolhido, restauracaoManual = false) {
     if (!panel) return;
-    panel.querySelector('[data-body]').hidden = collapsed;
+    // Resultados e erros continuam nos popovers sem reabrir o painel contra a escolha do usuário.
+    if (!recolhido && panel.hidden && !restauracaoManual) return;
+    panel.hidden = recolhido;
+    panel.querySelector('[data-body]').hidden = recolhido;
     const button = panel.querySelector('[data-collapse]');
-    button.textContent = collapsed ? '+' : '−';
-    button.setAttribute('aria-label', collapsed ? 'Expandir painel' : 'Recolher painel');
+    button.textContent = recolhido ? '+' : '−';
+    button.setAttribute('aria-label', recolhido ? 'Restaurar painel' : 'Minimizar painel');
+    button.setAttribute('aria-expanded', String(!recolhido));
+    if (recolhido) exibirBotaoRestaurarPainel();
+    else removerBotaoRestaurarPainel();
   }
 
   /** Foca o campo apenas quando ele está conectado e visível; pode selecionar seu conteúdo. */
   function focarCampoTitulo(select = false) {
     const input = panel?.querySelector('[data-title]');
-    if (input?.isConnected && !panel.querySelector('[data-body]').hidden) {
+    if (input?.isConnected && !panel.hidden && !panel.querySelector('[data-body]').hidden) {
       input.focus({preventScroll:true});
       if (select) input.select();
     }
@@ -567,6 +602,26 @@
       margin: 12px 0 0;
     `
   });
+
+  // Atalho independente do painel: não altera a posição salva para o tamanho normal.
+  const ESTILO_BOTAO_RESTAURAR_PAINEL = `
+    position: fixed;
+    top: 8px;
+    right: 8px;
+    width: 36px;
+    height: 36px;
+    margin: 0;
+    padding: 0;
+    border: 1px solid #123858;
+    border-radius: 6px;
+    background: #174975;
+    color: white;
+    box-shadow: 0 3px 12px #0003;
+    font: 700 24px/1 Arial,sans-serif;
+    cursor: pointer;
+    z-index: 2147483647;
+    box-sizing: border-box;
+  `;
 
   /** Define a estrutura estática. Valores digitados e mensagens são atribuídos depois como texto. */
   function obterHtmlPainel() {
@@ -710,6 +765,8 @@
     const campoAnterior = panel?.querySelector('[data-title]');
     const rascunho = campoAnterior ? campoAnterior.value
       : state && !state.clearTitle ? formatarTitulo(state.title) : '';
+    const estavaRecolhido = Boolean(panel?.hidden);
+    removerBotaoRestaurarPainel();
     panel?.remove();
 
     panel = criarPainel(quadro.doc);
@@ -720,6 +777,7 @@
     restaurarPosicaoPainel(panel, quadro.win);
     habilitarArrastePainel(panel, quadro.win);
 
+    definirPainelRecolhido(estavaRecolhido);
     atualizarBotoes();
     focarCampoTitulo();
     // O monitor reaplica o foco quando o documento terminar de carregar.
@@ -747,7 +805,7 @@
   /** Reconhece alterações do painel e dos avisos para evitar ciclos causados pela própria interface. */
   function alteracaoDoScript(record) {
     const element = record.target.nodeType === 1 ? record.target : record.target.parentElement;
-    return Boolean(element?.closest?.('#' + PANEL + ',[data-elo-ase-popover]'));
+    return Boolean(element?.closest?.('#' + PANEL + ',[data-elo-ase-popover],[data-elo-ase-restaurar]'));
   }
 
   /** Desconecta o observador e os eventos de um documento substituído ou encerrado. */
@@ -1074,7 +1132,7 @@
     if (doc.readyState !== 'complete') return false;
     // Evita confundir mensagens do painel, alertas antigos ou textos de outros campos.
     return Array.from(doc.querySelectorAll('td,p,div,span,[role="alert"]')).some(node => {
-      if (node.closest('#' + PANEL + ',[data-elo-ase-popover]')) return false;
+      if (node.closest('#' + PANEL + ',[data-elo-ase-popover],[data-elo-ase-restaurar]')) return false;
       const text = node.textContent.replace(/\s+/g, ' ').trim();
       // Consulta estilos e dimensões apenas quando o texto pode ser a mensagem esperada.
       return CONFIG.noResultPattern.test(text) && elementoVisivel(node);
