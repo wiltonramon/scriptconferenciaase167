@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.33
+// @version      1.5.34
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -13,7 +13,8 @@
 
   /*
    * GUIA DE MANUTENÇÃO
-   * - CONFIG: códigos, datas dos turnos e duração dos avisos e das etapas.
+   * - ELEICOES: conjuntos de turnos e datas disponíveis; ELEICAO: ano escolhido.
+   * - CONFIG: códigos ASE e duração dos avisos e das etapas.
    * - TIMEOUT_MESSAGES: mensagens de prazo excedido por etapa da consulta.
    * - montarRelatorioTurnos/relatarAusencias: redação dos resultados exibidos.
    * - lerAsesPorTurno/conferirHistorico: leitura, pendências, cores e limpeza do título.
@@ -38,14 +39,23 @@
   const KEY = 'elo.consultaASE.v1';
   const PANEL = 'elo-consulta-ase-painel';
   const LIMIT = 120000;
-  // Ajuste aqui a cada eleição: código do ASE e datas dos turnos.
+  // Cadastre aqui os conjuntos de turnos. A conferência usa somente o conjunto escolhido.
+  const ELEICOES = {
+    2024: [
+      {label:'1º turno', date:'06/10/2024'}
+    ],
+    2026: [
+      {label:'1º turno', date:'04/10/2026'},
+      {label:'2º turno', date:'25/10/2026'}
+    ]
+  };
+  // Para alternar entre os conjuntos cadastrados, mude somente este ano e recarregue o ELO.
+  const ELEICAO = 2026;
+
   const CONFIG = Object.freeze({
     aseCode: '167',
     absenceAseCode: '094',
-    turns: Object.freeze([
-      Object.freeze({label:'1º turno', date:'04/10/2026'}),
-      Object.freeze({label:'2º turno', date:'25/10/2026'})
-    ]),
+    turns: Object.freeze(ELEICOES[ELEICAO].map(turn => Object.freeze(turn))),
     popoverDurationMs: 10000, // duração de todos os avisos, incluindo erros
     stepTimeoutMs: 45000,  // espera máxima em cada etapa (consulta, resultado, detalhe, histórico)
     historyRetryMs: 4000,  // tempo para a tabela do histórico aparecer antes de acusar falha
@@ -152,7 +162,7 @@
   /** Persiste estado, retorno e posição do painel no formato compatível com as versões anteriores. */
   function salvarSessao() {
     // Salva a próxima etapa ANTES de um clique que possa trocar de página.
-    window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition}));
+    window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition, election:ELEICAO}));
   }
 
   /** Recupera a sessão e descarta consultas expiradas ou dados que não puderem ser lidos. */
@@ -162,6 +172,13 @@
       if (!saved) return;
       home = validarEnderecoInicial(saved.home);
       savedPosition = saved.position;
+      // Sessões anteriores a esta opção pertencem ao conjunto original de 2026.
+      // Uma troca de ano preserva o retorno e a posição, mas não reutiliza o resultado anterior.
+      if ((saved.election ?? 2026) !== ELEICAO) {
+        state = null;
+        statusText = `Eleição alterada para ${ELEICAO}. Inicie uma nova consulta.`;
+        return;
+      }
       if (estadoValido(saved.state)) state = saved.state;
       else if (saved.state) statusText = 'Consulta anterior expirada. Inicie uma nova consulta.';
     } catch { statusText = 'Não foi possível recuperar a consulta anterior.'; }
@@ -314,6 +331,10 @@
   function montarRelatorioTurnos(title, found, name = '', absenceFound) {
     const heading = `ELEITOR(A): ${name.trim() || 'nome não identificado'}\nTÍTULO: ${formatarTitulo(title)}`;
     if (found?.every(Boolean)) {
+      if (CONFIG.turns.length === 1) {
+        const turn = CONFIG.turns[0];
+        return `${heading}\nASE ${CONFIG.aseCode} registrado no ${rotuloTurno(turn)} (${turn.date}).\nNão há registros a serem feitos.`;
+      }
       const dates = CONFIG.turns.map(turn => `${rotuloTurno(turn)} (${turn.date})`).join('\n');
       return `${heading}\nASE ${CONFIG.aseCode} registrado ${CONFIG.turns.length === 2 ? 'nos dois turnos' : 'em todos os turnos'}.\n${dates}\nNão há registros a serem feitos.`;
     }
