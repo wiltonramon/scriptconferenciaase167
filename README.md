@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.35.**
+**Versão atual: 1.5.36.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -37,11 +37,12 @@ Se houver outros filtros preenchidos no formulário original do ELO, o script pe
 
 O painel tem visual compacto, com a eleição ativa e a quantidade de turnos no cabeçalho. A consulta fica em destaque, os botões **Voltar** e **Parar** aparecem lado a lado e a área **Acompanhamento** mantém as mensagens completas, com rolagem quando necessário. Durante a execução, o botão principal mostra **Consultando…** e o indicador mostra **Em consulta**.
 
+- **Eleição e turnos:** escolha o ano e marque os turnos a conferir no próprio painel. É necessário manter pelo menos um turno selecionado. Esses controles ficam bloqueados enquanto a consulta estiver em andamento.
 - **Título formatado:** apresenta espaços a cada quatro dígitos, inclusive nos avisos, como `0656 9130 0701`.
 - **Validação durante a digitação:** verifica o formato, o código de UF e os dígitos verificadores. O botão Consultar ASE permanece desativado enquanto a entrada estiver incompleta ou inválida. Essa validação não confirma a existência do cadastro no ELO.
 - **Limpar título:** use o botão **×** à direita do campo ou pressione **Esc** com o foco no campo.
 - **Mover painel:** arraste pelo cabeçalho. A posição é salva na sessão da aba e reaplicada ao recriar o painel.
-- **Minimizar:** use o botão no cabeçalho. O painel inteiro é ocultado e fica somente uma seta no canto superior direito.
+- **Minimizar:** use o botão no cabeçalho. O painel inteiro é ocultado e fica somente uma seta pequena e discreta no canto superior direito, com destaque ao receber o mouse ou o foco do teclado.
 - **Restaurar:** clique na seta para recuperar o tamanho normal, a posição anterior e o título que estava digitando. Enquanto minimizado, o painel não é reaberto automaticamente pelos resultados da consulta, e a seta acompanha a troca dos quadros internos do ELO.
 - **Parar:** interrompe a consulta em andamento.
 - **Voltar:** retorna ao endereço de consulta inicial registrado anteriormente.
@@ -56,15 +57,21 @@ Outro título que já esteja sendo preparado para a próxima consulta é preserv
 
 ## Selecionar a eleição
 
-Os conjuntos de datas ficam no objeto `ELEICOES`, no início do código. Para alternar entre eles, mude somente a constante `ELEICAO`, salve o script instalado e recarregue o ELO:
+Use o seletor **Eleição** do painel para escolher 2022, 2024 ou 2026. Ao mudar o ano, todos os turnos cadastrados para ele são inicialmente marcados. Depois, marque somente os turnos que deseja conferir. Por exemplo, é possível selecionar apenas o 2º turno de 2026.
+
+A preferência de ano e turnos fica salva na sessão da aba e acompanha a navegação e a recriação do painel. Durante uma consulta, os seletores ficam desativados; use **Parar** se precisar interromper a execução para mudar a seleção.
+
+Os conjuntos disponíveis ficam no objeto `ELEICOES`, no início do código. Para adicionar outra eleição, cadastre uma nova chave e sua lista de turnos. O seletor do painel será preenchido com os conjuntos cadastrados.
+
+A constante `ELEICAO` define apenas o valor inicial para uma sessão sem preferência salva:
 
 ```javascript
-const ELEICAO = 2026; // padrão: os dois turnos de 2026
+const ELEICAO = 2026; // valor inicial: os dois turnos de 2026
 ```
 
-Para conferir os dois turnos de 2022, use `const ELEICAO = 2022;`. Para conferir apenas o primeiro turno de 2024, use `const ELEICAO = 2024;`. O conjunto de 2024 contém somente esse turno. Para adicionar outra eleição, cadastre uma nova chave e sua lista de turnos em `ELEICOES` e depois selecione a chave em `ELEICAO`.
+O conjunto de 2024 contém somente o primeiro turno. Os conjuntos de 2022 e 2026 contêm os dois turnos.
 
-Ao trocar de eleição, consultas e resultados da sessão anterior não são retomados. O endereço de retorno e a posição do painel são preservados.
+Ao alterar o ano ou os turnos, o resultado anterior é descartado e o histórico aberto é relido no novo contexto, quando disponível. O título em digitação, o endereço de retorno e a posição do painel são preservados.
 
 ## Datas e regras de conferência
 
@@ -76,7 +83,7 @@ Ao trocar de eleição, consultas e resultados da sessão anterior não são ret
 | 2026 (padrão) | 1º Turno | 04/10/2026 | ASE 094 e ASE 167 |
 | 2026 (padrão) | 2º Turno | 25/10/2026 | ASE 094 e ASE 167 |
 
-Somente as datas do conjunto escolhido em `ELEICAO` participam da conferência. Registros de outras datas não completam os turnos selecionados.
+Somente as datas dos turnos marcados no painel participam da conferência. Registros de outras datas não completam os turnos selecionados.
 
 A busca usa a coluna **Ocorrência**, e exige que código e data estejam na mesma linha da tabela. A data de processamento não é usada.
 
@@ -103,7 +110,7 @@ Quando o ASE 167 é identificado em todos os turnos selecionados, o aviso é ver
 
 ### Exemplo: apenas o primeiro turno de 2024
 
-Com `ELEICAO = 2024`, o sucesso é apresentado no singular:
+Com 2024 selecionado no painel, o sucesso é apresentado no singular. O mesmo acontece ao selecionar somente um dos turnos de outra eleição:
 
 ```text
 ELEITOR(A): [nome do eleitor]
@@ -149,8 +156,9 @@ O script permanece em um arquivo único, com funções próprias nomeadas em por
 
 | O que alterar | Onde procurar |
 | --- | --- |
-| Eleição selecionada | `ELEICAO` |
+| Ano e turnos selecionados | Controles do painel; `ELEICAO` define o valor inicial |
 | Conjuntos de turnos e datas disponíveis | `ELEICOES` |
+| Validação e atualização do contexto | `aplicarSelecaoEleitoral`, `alterarSelecaoEleitoral` e `atualizarSelecaoPainel` |
 | Códigos ASE e tempos de espera | `CONFIG` |
 | Mensagens de prazo excedido | `TIMEOUT_MESSAGES` |
 | Leitura dos registros por código, situação e data | `lerAsesPorTurno` |
@@ -167,7 +175,7 @@ O script permanece em um arquivo único, com funções próprias nomeadas em por
 
 Os nomes das APIs externas, seletores do ELO e propriedades salvas na sessão são preservados por compatibilidade. Alterações em `KEY` ou no formato persistido exigem cuidado para não perder a continuidade de consultas iniciadas.
 
-Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.35 reformula o painel com visual compacto, contexto da eleição e ações agrupadas, e acrescenta os dois turnos de 2022. O padrão continua sendo `ELEICAO = 2026`.
+Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.36 permite escolher ano e turnos no painel, salva a preferência na sessão e deixa a seta minimizada mais discreta. O valor inicial continua sendo `ELEICAO = 2026`.
 
 ## Escopo e dados temporários
 
@@ -175,7 +183,7 @@ Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos ar
 - Depende da sessão autenticada e do acesso regular do usuário ao ELO.
 - Consulta e confere registros. Não lança ASE nem altera o cadastro eleitoral.
 - Não utiliza bibliotecas externas nem envia os dados consultados para outros serviços.
-- Usa `sessionStorage` para manter eleição selecionada, título, etapa, resultado, endereço de retorno e posição do painel entre navegações. O nome exibido nos relatórios é omitido da mensagem salva na sessão.
+- Usa `sessionStorage` para manter eleição e turnos selecionados, título, etapa, resultado, endereço de retorno e posição do painel entre navegações. O nome exibido nos relatórios é omitido da mensagem salva na sessão.
 - Confere as linhas disponíveis na tabela carregada; não percorre automaticamente eventual paginação do histórico.
 
 ## Licença
