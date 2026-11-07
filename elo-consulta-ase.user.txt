@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.35
+// @version      1.5.36
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -13,7 +13,8 @@
 
   /*
    * GUIA DE MANUTENÇÃO
-   * - ELEICOES: conjuntos de turnos e datas disponíveis; ELEICAO: ano escolhido.
+   * - ELEICOES: conjuntos disponíveis; ELEICAO: valor inicial, alterável pelo painel.
+   * - aplicarSelecaoEleitoral: valida o contexto usado na conferência e na sessão.
    * - CONFIG: códigos ASE e duração dos avisos e das etapas.
    * - TIMEOUT_MESSAGES: mensagens de prazo excedido por etapa da consulta.
    * - montarRelatorioTurnos/relatarAusencias: redação dos resultados exibidos.
@@ -53,13 +54,16 @@
       {label:'2º turno', date:'25/10/2026'}
     ]
   };
-  // Para alternar entre os conjuntos cadastrados, mude somente este ano e recarregue o ELO.
+  // Valor inicial para uma sessão nova. Eleição e turnos podem ser escolhidos no painel.
   const ELEICAO = 2026;
+  let eleicaoSelecionada = ELEICAO;
+  let indicesTurnosSelecionados = Object.freeze(ELEICOES[ELEICAO].map((_, index) => index));
+  let turnosSelecionados = Object.freeze(ELEICOES[ELEICAO].map(turn => Object.freeze({...turn})));
 
   const CONFIG = Object.freeze({
     aseCode: '167',
     absenceAseCode: '094',
-    turns: Object.freeze(ELEICOES[ELEICAO].map(turn => Object.freeze(turn))),
+    get turns() { return turnosSelecionados; },
     popoverDurationMs: 10000, // duração de todos os avisos, incluindo erros
     stepTimeoutMs: 45000,  // espera máxima em cada etapa (consulta, resultado, detalhe, histórico)
     historyRetryMs: 4000,  // tempo para a tabela do histórico aparecer antes de acusar falha
@@ -75,8 +79,8 @@
   });
 
   // Estado temporário: WeakMap evita reter documentos que o ELO já substituiu.
-  const checkedHistories = new WeakMap();
-  const historyWaits = new WeakMap();
+  let checkedHistories = new WeakMap();
+  let historyWaits = new WeakMap();
   let state = null;
   let home = null;
   let panel = null;
@@ -163,10 +167,28 @@
     } catch { return null; }
   }
 
-  /** Persiste estado, retorno e posição do painel no formato compatível com as versões anteriores. */
+  /** Valida a seleção inteira antes de modificar o contexto; exige ao menos um turno existente. */
+  function aplicarSelecaoEleitoral(ano, indices) {
+    const turnos = ELEICOES[ano];
+    if (!Array.isArray(turnos) || !Array.isArray(indices) || !indices.length) return false;
+    const escolhidos = [...new Set(indices)].sort((a, b) => a - b);
+    if (escolhidos.some(index => !Number.isInteger(index) || index < 0 || index >= turnos.length)) return false;
+    eleicaoSelecionada = Number(ano);
+    indicesTurnosSelecionados = Object.freeze(escolhidos);
+    turnosSelecionados = Object.freeze(escolhidos.map(index => Object.freeze({...turnos[index]})));
+    return true;
+  }
+
+  /** Separa o cache por eleição e subconjunto de turnos, inclusive para o mesmo eleitor. */
+  function chaveContextoEleitoral() {
+    return `${eleicaoSelecionada}:${indicesTurnosSelecionados.join(',')}`;
+  }
+
+  /** Persiste a seleção junto da consulta, sem gravar o nome do eleitor. */
   function salvarSessao() {
     // Salva a próxima etapa ANTES de um clique que possa trocar de página.
-    window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition, election:ELEICAO}));
+    window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition,
+      election:eleicaoSelecionada, selectedTurns:indicesTurnosSelecionados}));
   }
 
   /** Recupera a sessão e descarta consultas expiradas ou dados que não puderem ser lidos. */
@@ -176,11 +198,12 @@
       if (!saved) return;
       home = validarEnderecoInicial(saved.home);
       savedPosition = saved.position;
-      // Sessões anteriores a esta opção pertencem ao conjunto original de 2026.
-      // Uma troca de ano preserva o retorno e a posição, mas não reutiliza o resultado anterior.
-      if ((saved.election ?? 2026) !== ELEICAO) {
+      // Sessões antigas não tinham subconjunto de turnos e usavam todos os turnos do ano.
+      const anoSalvo = saved.election ?? 2026;
+      const indicesSalvos = saved.selectedTurns ?? ELEICOES[anoSalvo]?.map((_, index) => index);
+      if (!aplicarSelecaoEleitoral(anoSalvo, indicesSalvos)) {
         state = null;
-        statusText = `Eleição alterada para ${ELEICAO}. Inicie uma nova consulta.`;
+        statusText = 'A seleção anterior não está disponível. Escolha a eleição e os turnos para consultar.';
         return;
       }
       if (estadoValido(saved.state)) state = saved.state;
@@ -458,6 +481,8 @@
     activity.textContent = active ? 'Em consulta' : 'Pronto';
     activity.style.background = active ? '#dceaf8' : '#e9eff6';
     activity.style.color = active ? '#174975' : '#425e7d';
+    panel.querySelector('[data-election-select]').disabled = active;
+    for (const controle of panel.querySelectorAll('[data-turn]')) controle.disabled = active;
   }
 
   /** Remove o atalho anterior, inclusive quando o ELO substitui o documento do painel. */
@@ -479,6 +504,13 @@
     botaoRestaurarPainel.setAttribute('aria-label', 'Restaurar painel de consulta ASE');
     botaoRestaurarPainel.setAttribute('data-elo-ase-restaurar', '');
     botaoRestaurarPainel.style.cssText = ESTILO_BOTAO_RESTAURAR_PAINEL;
+    const botao = botaoRestaurarPainel;
+    botao.addEventListener('mouseenter', () => { botao.style.opacity = '1'; });
+    botao.addEventListener('mouseleave', () => {
+      if (doc.activeElement !== botao) botao.style.opacity = '0.65';
+    });
+    botao.addEventListener('focus', () => { botao.style.opacity = '1'; });
+    botao.addEventListener('blur', () => { botao.style.opacity = '0.65'; });
     botaoRestaurarPainel.addEventListener('click', () => {
       definirPainelRecolhido(false, true);
       focarCampoTitulo();
@@ -573,6 +605,12 @@
       font: 20px/1 Arial,sans-serif; cursor: pointer;
     `,
     '[data-body]': `padding: 12px; max-height: calc(100vh - 156px); overflow-y: auto; box-sizing: border-box;`,
+    '[data-election-controls]': `margin: 0 0 12px; padding: 0 0 12px; border-bottom: 1px solid #e7edf5;`,
+    '[data-election-label]': `display: block; margin: 0 0 5px; color: #253d58; font: 700 12px/1.4 Arial,sans-serif;`,
+    '[data-election-select]': `box-sizing: border-box; width: 100%; height: 32px; margin: 0; padding: 4px 8px; border: 1px solid #cbd6e3; border-radius: 7px; background: #f8fafc; color: #253d58; font: 12px/1.4 Arial,sans-serif;`,
+    '[data-turns]': `display: grid; grid-template-columns: repeat(auto-fit,minmax(112px,1fr)); gap: 6px; margin-top: 7px;`,
+    '[data-turn-option]': `display: flex; align-items: center; gap: 6px; box-sizing: border-box; margin: 0; padding: 6px; border: 1px solid #dce4ee; border-radius: 7px; background: #f8fafc; color: #344f6d; font: 11px/1.4 Arial,sans-serif; cursor: pointer; white-space: pre-line;`,
+    '[data-turn]': `flex: 0 0 14px; width: 14px; height: 14px; margin: 0; padding: 0; accent-color: #174975;`,
     '[data-form]': `margin: 0; padding: 0;`,
     '[data-input-heading]': `display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;`,
     'label[for="elo-ase-titulo"]': `display: block; margin: 0; color: #253d58; font: 700 12px/1.4 Arial,sans-serif;`,
@@ -633,16 +671,17 @@
     position: fixed;
     top: 8px;
     right: 8px;
-    width: 36px;
-    height: 36px;
+    width: 24px;
+    height: 28px;
     margin: 0;
     padding: 0;
-    border: 1px solid #123858;
-    border-radius: 6px;
-    background: #174975;
-    color: white;
-    box-shadow: 0 3px 12px #0003;
-    font: 700 24px/1 Arial,sans-serif;
+    border: 1px solid #d9e2eb;
+    border-radius: 5px;
+    background: #f8fafc;
+    color: #62758c;
+    box-shadow: none;
+    opacity: 0.65;
+    font: 18px/1 Arial,sans-serif;
     cursor: pointer;
     z-index: 2147483647;
     box-sizing: border-box;
@@ -662,6 +701,11 @@
         <button type="button" data-collapse title="Minimizar painel" aria-label="Minimizar painel">−</button>
       </div>
       <div data-body>
+        <div data-election-controls>
+          <label data-election-label for="elo-ase-eleicao">Eleição</label>
+          <select data-election-select id="elo-ase-eleicao" aria-label="Eleição"></select>
+          <div data-turns role="group" aria-label="Turnos para conferir"></div>
+        </div>
         <form data-form>
           <div data-input-heading>
             <label for="elo-ase-titulo">Título de eleitor</label>
@@ -694,8 +738,8 @@
   /** Aplica a aparência inicial; cores de validação e estados dos botões continuam dinâmicos. */
   function aplicarEstilosPainel(elemento) {
     for (const [seletor, estilos] of Object.entries(ESTILOS_PAINEL)) {
-      const controle = seletor === 'raiz' ? elemento : elemento.querySelector(seletor);
-      controle.style.cssText = estilos;
+      const controles = seletor === 'raiz' ? [elemento] : elemento.querySelectorAll(seletor);
+      for (const controle of controles) controle.style.cssText = estilos;
     }
   }
 
@@ -705,9 +749,76 @@
     elemento.id = PANEL;
     elemento.setAttribute('aria-label', 'Consulta rápida ASE');
     elemento.innerHTML = obterHtmlPainel();
+    atualizarSelecaoPainel(elemento);
     aplicarEstilosPainel(elemento);
-    elemento.querySelector('[data-election]').textContent = `${ELEICAO} · ${CONFIG.turns.length} ${CONFIG.turns.length === 1 ? 'turno' : 'turnos'}`;
     return elemento;
+  }
+
+  /** Recria somente as opções de turno; não reaplica estilos que deslocariam o painel. */
+  function atualizarSelecaoPainel(elemento = panel) {
+    if (!elemento) return;
+    const seletor = elemento.querySelector('[data-election-select]');
+    if (!seletor.children.length) {
+      for (const ano of Object.keys(ELEICOES).sort((a, b) => Number(b) - Number(a))) {
+        const opcao = elemento.ownerDocument.createElement('option');
+        opcao.value = ano;
+        opcao.textContent = ano;
+        seletor.append(opcao);
+      }
+    }
+    seletor.value = String(eleicaoSelecionada);
+    const grupo = elemento.querySelector('[data-turns]');
+    grupo.textContent = '';
+    ELEICOES[eleicaoSelecionada].forEach((turno, index) => {
+      const rotulo = elemento.ownerDocument.createElement('label');
+      rotulo.setAttribute('data-turn-option', '');
+      rotulo.style.cssText = ESTILOS_PAINEL['[data-turn-option]'];
+      const caixa = elemento.ownerDocument.createElement('input');
+      caixa.type = 'checkbox';
+      caixa.setAttribute('data-turn', '');
+      caixa.value = String(index);
+      caixa.checked = indicesTurnosSelecionados.includes(index);
+      caixa.style.cssText = ESTILOS_PAINEL['[data-turn]'];
+      const texto = elemento.ownerDocument.createElement('span');
+      texto.textContent = `${rotuloTurno(turno)}\n${turno.date}`;
+      rotulo.append(caixa, texto);
+      grupo.append(rotulo);
+    });
+    elemento.querySelector('[data-election]').textContent = `${eleicaoSelecionada} · ${CONFIG.turns.length} ${CONFIG.turns.length === 1 ? 'turno' : 'turnos'}`;
+  }
+
+  /** Invalida o resultado anterior e relê o histórico aberto no novo contexto, se houver. */
+  function alterarSelecaoEleitoral(ano, indices) {
+    if (consultaEmAndamento()) return false;
+    const anterior = chaveContextoEleitoral();
+    if (!aplicarSelecaoEleitoral(ano, indices)) return false;
+    if (anterior === chaveContextoEleitoral()) return true;
+    // Também invalida a leitura se o usuário voltar à seleção anterior antes do próximo ciclo.
+    checkedHistories = new WeakMap();
+    historyWaits = new WeakMap();
+    atualizarSelecaoPainel();
+    interromperConsulta(`Eleição ${eleicaoSelecionada}: ${CONFIG.turns.map(rotuloTurno).join(' e ')}. Pronto para consultar.`);
+    agendarVerificacao();
+    return true;
+  }
+
+  /** Selecionar outro ano marca inicialmente todos os turnos cadastrados para ele. */
+  function alterarEleicaoPainel(evento) {
+    const ano = Number(evento.currentTarget.value);
+    const indices = ELEICOES[ano]?.map((_, index) => index);
+    if (!alterarSelecaoEleitoral(ano, indices)) atualizarSelecaoPainel();
+    atualizarBotoes();
+  }
+
+  /** Impede uma seleção vazia, mantendo a última opção e o contexto anterior intactos. */
+  function alterarTurnosPainel() {
+    const indices = Array.from(panel.querySelectorAll('[data-turn]'))
+      .filter(controle => controle.checked).map(controle => Number(controle.value));
+    if (!alterarSelecaoEleitoral(eleicaoSelecionada, indices)) {
+      atualizarSelecaoPainel();
+      if (!consultaEmAndamento()) atualizarMensagemPainel('Mantenha pelo menos um turno selecionado.');
+    }
+    atualizarBotoes();
   }
 
   /** Escolhe um quadro com body, dando preferência ao quadro principal do ELO. */
@@ -728,6 +839,8 @@
   /** Reúne os eventos dos controles. É chamada somente na criação de um painel novo. */
   function registrarEventosPainel(elemento) {
     isolarEventosDoScript(elemento);
+    elemento.querySelector('[data-election-select]').addEventListener('change', alterarEleicaoPainel);
+    elemento.querySelector('[data-turns]').addEventListener('change', alterarTurnosPainel);
     const campoTitulo = elemento.querySelector('[data-title]');
     campoTitulo.addEventListener('input', formatarCampoTitulo);
     campoTitulo.addEventListener('keydown', tratarEscapeNoTitulo);
@@ -1106,14 +1219,15 @@
     // Retorna true quando relatou o histórico, 'waiting' quando aguarda a tabela e false quando não havia o que fazer.
     const history = views.find(view => view.doc && view.historyTitle
       && (!consultaEmAndamento() || (state.phase === 'history' && state.title === view.historyTitle)));
+    const chaveHistorico = history ? `${history.historyTitle}|${chaveContextoEleitoral()}` : '';
     // O cache evita avisos repetidos em repouso, mas não substitui uma nova consulta.
-    if (!history || (!consultaEmAndamento() && checkedHistories.get(history.doc) === history.historyTitle)) return false;
+    if (!history || (!consultaEmAndamento() && checkedHistories.get(history.doc) === chaveHistorico)) return false;
     const found = lerAsesPorTurno(history.doc);
     if (!found) {
       // O documento já terminou de carregar. Só aguarda se a tabela ainda não existe.
       let waiting = historyWaits.get(history.doc);
-      if (!waiting || waiting.title !== history.historyTitle) {
-        waiting = {title:history.historyTitle, since:Date.now()};
+      if (!waiting || waiting.context !== chaveHistorico) {
+        waiting = {context:chaveHistorico, since:Date.now()};
         historyWaits.set(history.doc, waiting);
       }
       if (Date.now() - waiting.since < CONFIG.historyRetryMs) {
@@ -1128,7 +1242,7 @@
     const tone = found?.every(Boolean) ? 'success'
       : !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
     const input = panel?.querySelector('[data-title]');
-    // Só considera ausência confirmada quando a leitura dos dois turnos foi possível.
+    // Só considera ausência confirmada quando a leitura dos turnos selecionados foi possível.
     const noAbsence = Boolean(absenceFound && !absenceFound.some(Boolean));
     // Preserva outro título que já esteja sendo preparado para a próxima consulta.
     const clearInput = (Boolean(found?.some(Boolean)) || noAbsence) && (!input || !input.value.trim()
@@ -1143,7 +1257,7 @@
     }
     exibirPopover(message, history.doc, tone);
     // Marca a leitura após concluir a atualização do aviso.
-    checkedHistories.set(history.doc, history.historyTitle);
+    checkedHistories.set(history.doc, chaveHistorico);
     historyWaits.delete(history.doc);
     if (clearInput) {
       if (input) input.value = '';
