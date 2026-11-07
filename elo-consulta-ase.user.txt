@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.43
+// @version      1.5.44
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -102,6 +102,7 @@
   let statusTone = 'neutral';
   let falhaSalva = null;
   let removerOuvinteResize = null;
+  let temporizadorCopia = null;
   let running = false;
   let timer = null;
   let pendingTick = null;
@@ -322,9 +323,8 @@
   }
 
   /** Lê código e data de ocorrência na mesma linha. Retorna boolean[] por turno, ou null se a tabela não puder ser interpretada. */
-  function lerAsesPorTurno(doc, code = CONFIG.aseCode, requiredStatus = '') {
+  function lerAsesPorTurno(doc, code = CONFIG.aseCode, requiredStatus = '', rows = Array.from(doc.querySelectorAll('tr'))) {
     // Cada código e data precisam estar na mesma linha da tabela de histórico.
-    const rows = Array.from(doc.querySelectorAll('tr'));
     const header = rows.find(row => {
       const names = Array.from(row.cells, cell => cell.textContent.trim());
       return names.includes('ASE') && names.includes('Ocorrência');
@@ -516,7 +516,7 @@
     statusTone = Object.hasOwn(TONS_STATUS, tone) ? tone : 'neutral';
     const status = panel?.querySelector('[data-status]');
     if (status && status.textContent !== text) status.textContent = text;
-    if (mudou && panel) panel.querySelector('[data-copy]').textContent = 'Copiar';
+    if (mudou) limparRetornoCopia();
     aplicarTomStatus();
   }
 
@@ -538,6 +538,14 @@
     }
   }
 
+  /** Cancela o retorno visual anterior, liberando a referência ao botão e ao documento. */
+  function limparRetornoCopia() {
+    if (temporizadorCopia !== null) window.clearTimeout(temporizadorCopia);
+    temporizadorCopia = null;
+    const botao = panel?.querySelector('[data-copy]');
+    if (botao) botao.textContent = 'Copiar';
+  }
+
   /** Copia o texto do resultado exibido no painel, com alternativa para navegadores sem Clipboard API. */
   async function copiarStatus() {
     const elemento = panel;
@@ -555,7 +563,7 @@
     } catch { /* A alternativa abaixo também funciona sem a Clipboard API. */ }
 
     // A consulta ou o quadro podem ter mudado enquanto o navegador respondia.
-    if (panel !== elemento || statusText !== texto || botao.disabled) return;
+    if (suspended || !elemento.isConnected || panel !== elemento || statusText !== texto || botao.disabled) return;
     if (!copiado) {
       const foco = doc.activeElement;
       const area = doc.createElement('textarea');
@@ -572,8 +580,9 @@
         if (foco?.isConnected) foco.focus({preventScroll:true});
       }
     }
+    limparRetornoCopia();
     botao.textContent = copiado ? 'Copiado ✓' : 'Falhou';
-    window.setTimeout(() => { if (botao.isConnected) botao.textContent = 'Copiar'; }, 1600);
+    temporizadorCopia = window.setTimeout(limparRetornoCopia, 1600);
   }
 
   /** Atualiza validação, orientação e disponibilidade dos botões de acordo com a entrada e a etapa. */
@@ -1120,6 +1129,7 @@
     const rascunho = campoAnterior ? campoAnterior.value
       : state && !state.clearTitle ? formatarTitulo(state.title) : '';
     const estavaRecolhido = Boolean(panel?.hidden);
+    limparRetornoCopia();
     removerBotaoRestaurarPainel();
     removerOuvinteResize?.();
     removerOuvinteResize = null;
@@ -1211,6 +1221,7 @@
 
   /** Libera temporizadores, observadores e referências ao suspender ou sair da página. */
   function encerrarMonitoramento() {
+    limparRetornoCopia();
     if (timer !== null) window.clearInterval(timer);
     if (pendingTick !== null) window.clearTimeout(pendingTick);
     timer = null; pendingTick = null; pendingTickDue = 0; focusAfterLoad = null;
@@ -1437,7 +1448,9 @@
     const chaveHistorico = history ? `${history.historyTitle}|${chaveContextoEleitoral()}` : '';
     // O cache evita avisos repetidos em repouso, mas não substitui uma nova consulta.
     if (!history || (!consultaEmAndamento() && checkedHistories.get(history.doc) === chaveHistorico)) return false;
-    const found = lerAsesPorTurno(history.doc);
+    // Compartilha a seleção de linhas apenas neste ciclo, sem manter documentos em cache forte.
+    const rows = Array.from(history.doc.querySelectorAll('tr'));
+    const found = lerAsesPorTurno(history.doc, CONFIG.aseCode, '', rows);
     if (!found) {
       // O documento já terminou de carregar. Só aguarda se a tabela ainda não existe.
       let waiting = historyWaits.get(history.doc);
@@ -1450,8 +1463,8 @@
         return 'waiting';
       }
     }
-    const absenceFound = lerAsesPorTurno(history.doc, CONFIG.absenceAseCode, ['ATIVO', 'INATIVO', 'FACULTADO']);
-    const ausenciasParaOrientacao = lerAsesPorTurno(history.doc, CONFIG.absenceAseCode, CONFIG.absenceGuidanceStatuses);
+    const absenceFound = lerAsesPorTurno(history.doc, CONFIG.absenceAseCode, ['ATIVO', 'INATIVO', 'FACULTADO'], rows);
+    const ausenciasParaOrientacao = lerAsesPorTurno(history.doc, CONFIG.absenceAseCode, CONFIG.absenceGuidanceStatuses, rows);
     const message = montarRelatorioTurnos(history.historyTitle, found, obterNomeEleitor(history.doc, history.historyTitle), absenceFound, ausenciasParaOrientacao);
     // Só orienta o lançamento condicional se houver 094 ATIVO ou FACULTADO sem 167 na mesma data.
     const pending = Boolean(found && ausenciasParaOrientacao?.some((absence, index) => absence && !found[index]));
