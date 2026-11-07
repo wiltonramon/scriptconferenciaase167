@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.39.**
+**Versão atual: 1.5.40.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -57,7 +57,7 @@ Outro título que já esteja sendo preparado para a próxima consulta é preserv
 
 ## Selecionar a eleição
 
-Expanda **Eleição e turnos** e use o seletor **Eleição** para escolher 2022, 2024 ou 2026. Ao mudar o ano, todos os turnos cadastrados para ele são inicialmente marcados. Depois, marque somente os turnos que deseja conferir. Por exemplo, é possível selecionar apenas o 2º turno de 2026. Recolher a seção preserva essa escolha e mantém seu resumo visível.
+Expanda **Eleição e turnos** e use o seletor **Eleição** para escolher 2020, 2022, 2024 ou 2026. Ao mudar o ano, todos os turnos cadastrados para ele são inicialmente marcados. Depois, marque somente os turnos que deseja conferir. Por exemplo, é possível selecionar apenas o 2º turno de 2026. Recolher a seção preserva essa escolha e mantém seu resumo visível.
 
 A preferência de ano e turnos fica salva na sessão da aba e acompanha a navegação e a recriação do painel. Durante uma consulta, os seletores ficam desativados; use **Parar** se precisar interromper a execução para mudar a seleção.
 
@@ -69,7 +69,7 @@ A constante `ELEICAO` define apenas o valor inicial para uma sessão sem prefer�
 const ELEICAO = 2026; // valor inicial: os dois turnos de 2026
 ```
 
-O conjunto de 2024 contém somente o primeiro turno. Os conjuntos de 2022 e 2026 contêm os dois turnos.
+Os quatro conjuntos contêm os dois turnos. É possível conferir ambos ou selecionar apenas um. Preferências já salvas são preservadas, inclusive a seleção anterior de somente o primeiro turno de 2024.
 
 Ao alterar o ano ou os turnos, o resultado anterior é descartado e o histórico aberto é relido no novo contexto, quando disponível. O título em digitação, o endereço de retorno e a posição do painel são preservados.
 
@@ -77,9 +77,12 @@ Ao alterar o ano ou os turnos, o resultado anterior é descartado e o histórico
 
 | Conjunto | Turno | Data de ocorrência | Códigos conferidos |
 | --- | --- | --- | --- |
+| 2020 | 1º Turno | 15/11/2020 | ASE 094 e ASE 167 |
+| 2020 | 2º Turno | 29/11/2020 | ASE 094 e ASE 167 |
 | 2022 | 1º Turno | 02/10/2022 | ASE 094 e ASE 167 |
 | 2022 | 2º Turno | 30/10/2022 | ASE 094 e ASE 167 |
 | 2024 | 1º Turno | 06/10/2024 | ASE 094 e ASE 167 |
+| 2024 | 2º Turno | 27/10/2024 | ASE 094 e ASE 167 |
 | 2026 (padrão) | 1º Turno | 04/10/2026 | ASE 094 e ASE 167 |
 | 2026 (padrão) | 2º Turno | 25/10/2026 | ASE 094 e ASE 167 |
 
@@ -110,7 +113,7 @@ Quando o ASE 167 é identificado em todos os turnos selecionados, o aviso é ver
 
 ### Exemplo: apenas o primeiro turno de 2024
 
-Com 2024 selecionado no painel, o sucesso é apresentado no singular. O mesmo acontece ao selecionar somente um dos turnos de outra eleição:
+Com apenas o primeiro turno de 2024 marcado no painel, o sucesso é apresentado no singular. O mesmo acontece ao selecionar somente um dos turnos de outra eleição:
 
 ```text
 ELEITOR(A): [nome do eleitor]
@@ -175,7 +178,9 @@ O script permanece em um arquivo único, com funções próprias nomeadas em por
 
 Os nomes das APIs externas, seletores do ELO e propriedades salvas na sessão são preservados por compatibilidade. Alterações em `KEY` ou no formato persistido exigem cuidado para não perder a continuidade de consultas iniciadas.
 
-Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.39 restringe a orientação condicional de ASE 167 aos registros ASE 094 ATIVO ou FACULTADO da mesma data, excluindo INATIVO dessa regra. As situações que podem gerar orientação ficam em `CONFIG.absenceGuidanceStatuses`. O valor inicial continua sendo `ELEICAO = 2026`.
+Os resultados salvos incluem uma assinatura da eleição, turnos, datas, códigos e situações que podem gerar orientação. Se essa configuração mudar, a seleção e a posição são recuperadas, mas uma nova consulta é solicitada. Sessões antigas sem assinatura também passam por essa validação antes de retomar uma consulta.
+
+Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.40 acrescenta os dois turnos de 2020 e o segundo turno de 2024, e impede a recuperação de resultados calculados com configurações anteriores. As situações que podem gerar orientação continuam em `CONFIG.absenceGuidanceStatuses`. O valor inicial continua sendo `ELEICAO = 2026`.
 
 ## Escopo e dados temporários
 
