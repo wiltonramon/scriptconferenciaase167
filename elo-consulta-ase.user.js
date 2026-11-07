@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.37
+// @version      1.5.38
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -598,7 +598,6 @@
       font: 700 10px/1 Arial,sans-serif; letter-spacing: .5px;
     `,
     '[data-panel-title]': `display: block; font: 700 14px/1.3 Arial,sans-serif; color: #183451;`,
-    '[data-election]': `display: block; margin-top: 3px; font: 12px/1.3 Arial,sans-serif; color: #5c7088;`,
     '[data-collapse]': `
       display: flex; align-items: center; justify-content: center;
       flex: 0 0 30px; width: 30px; height: 30px;
@@ -703,7 +702,6 @@
           <span data-brand-mark aria-hidden="true">ASE</span>
           <div>
             <strong data-panel-title>Consulta ASE</strong>
-            <span data-election></span>
           </div>
         </div>
         <button type="button" data-collapse title="Minimizar painel" aria-label="Minimizar painel">−</button>
@@ -810,7 +808,6 @@
       rotulo.append(caixa, texto);
       grupo.append(rotulo);
     });
-    elemento.querySelector('[data-election]').textContent = `${eleicaoSelecionada} · ${CONFIG.turns.length} ${CONFIG.turns.length === 1 ? 'turno' : 'turnos'}`;
     elemento.querySelector('[data-selection-summary]').textContent = `${eleicaoSelecionada} · ${CONFIG.turns.map(rotuloTurno).join(' e ')}`;
   }
 
