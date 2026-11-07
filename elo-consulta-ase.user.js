@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.40
+// @version      1.5.41
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -64,6 +64,8 @@
   let eleicaoSelecionada = ELEICAO;
   let indicesTurnosSelecionados = Object.freeze(ELEICOES[ELEICAO].map((_, index) => index));
   let turnosSelecionados = Object.freeze(ELEICOES[ELEICAO].map(turn => Object.freeze({...turn})));
+  // Guarda as escolhas de cada ano durante a sessão, sem misturar os contextos de consulta.
+  const turnosPorEleicao = Object.assign(Object.create(null), {[ELEICAO]:indicesTurnosSelecionados});
   let escolhaEleitoralRecolhida = true;
 
   const CONFIG = Object.freeze({
@@ -174,15 +176,23 @@
     } catch { return null; }
   }
 
-  /** Valida a seleção inteira antes de modificar o contexto; exige ao menos um turno existente. */
-  function aplicarSelecaoEleitoral(ano, indices) {
+  /** Normaliza uma preferência sem alterar a eleição atual; rejeita seleção vazia ou inválida. */
+  function validarIndicesTurnos(ano, indices) {
     const turnos = ELEICOES[ano];
-    if (!Array.isArray(turnos) || !Array.isArray(indices) || !indices.length) return false;
+    if (!Array.isArray(turnos) || !Array.isArray(indices) || !indices.length) return null;
     const escolhidos = [...new Set(indices)].sort((a, b) => a - b);
-    if (escolhidos.some(index => !Number.isInteger(index) || index < 0 || index >= turnos.length)) return false;
+    if (escolhidos.some(index => !Number.isInteger(index) || index < 0 || index >= turnos.length)) return null;
+    return Object.freeze(escolhidos);
+  }
+
+  /** Aplica uma seleção válida e memoriza os turnos escolhidos para aquele ano. */
+  function aplicarSelecaoEleitoral(ano, indices) {
+    const escolhidos = validarIndicesTurnos(ano, indices);
+    if (!escolhidos) return false;
     eleicaoSelecionada = Number(ano);
-    indicesTurnosSelecionados = Object.freeze(escolhidos);
-    turnosSelecionados = Object.freeze(escolhidos.map(index => Object.freeze({...turnos[index]})));
+    indicesTurnosSelecionados = escolhidos;
+    turnosSelecionados = Object.freeze(escolhidos.map(index => Object.freeze({...ELEICOES[ano][index]})));
+    turnosPorEleicao[eleicaoSelecionada] = escolhidos;
     return true;
   }
 
@@ -203,6 +213,7 @@
     // Salva a próxima etapa ANTES de um clique que possa trocar de página.
     window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition,
       election:eleicaoSelecionada, selectedTurns:indicesTurnosSelecionados,
+      turnsByElection:turnosPorEleicao,
       selectionCollapsed:escolhaEleitoralRecolhida, queryContext:chaveContextoEleitoral()}));
   }
 
@@ -214,9 +225,14 @@
       home = validarEnderecoInicial(saved.home);
       savedPosition = saved.position;
       if (typeof saved.selectionCollapsed === 'boolean') escolhaEleitoralRecolhida = saved.selectionCollapsed;
+      // Recupera só anos cadastrados e preferências válidas, sem mudar o contexto atual.
+      for (const ano of Object.keys(ELEICOES)) {
+        const indices = validarIndicesTurnos(ano, saved.turnsByElection?.[ano]);
+        if (indices) turnosPorEleicao[ano] = indices;
+      }
       // Sessões antigas não tinham subconjunto de turnos e usavam todos os turnos do ano.
       const anoSalvo = saved.election ?? 2026;
-      const indicesSalvos = saved.selectedTurns ?? ELEICOES[anoSalvo]?.map((_, index) => index);
+      const indicesSalvos = saved.selectedTurns ?? turnosPorEleicao[anoSalvo] ?? ELEICOES[anoSalvo]?.map((_, index) => index);
       if (!aplicarSelecaoEleitoral(anoSalvo, indicesSalvos)) {
         state = null;
         statusText = 'A seleção anterior não está disponível. Escolha a eleição e os turnos para consultar.';
@@ -850,10 +866,10 @@
     return true;
   }
 
-  /** Selecionar outro ano marca inicialmente todos os turnos cadastrados para ele. */
+  /** Recupera a preferência do ano; na primeira escolha, marca todos os turnos cadastrados. */
   function alterarEleicaoPainel(evento) {
     const ano = Number(evento.currentTarget.value);
-    const indices = ELEICOES[ano]?.map((_, index) => index);
+    const indices = turnosPorEleicao[ano] ?? ELEICOES[ano]?.map((_, index) => index);
     if (!alterarSelecaoEleitoral(ano, indices)) atualizarSelecaoPainel();
     atualizarBotoes();
   }
