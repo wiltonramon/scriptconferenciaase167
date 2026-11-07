@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.44
+// @version      1.5.45
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -1254,12 +1254,23 @@
   /** Decide a próxima ação a partir da etapa e dos quadros atuais, sem clicar ou alterar o estado. */
   function escolherProximaAcao(current, views) {
     if (!current || current.phase === 'done') return null;
+    if (current.phase === 'query' && current.direct) return {kind:'direct'};
     if (current.phase === 'query') {
       const view = views.find(formularioPronto);
       return view ? {kind:'query', view} : null;
     }
     if (current.phase === 'history') {
       return views.some(v => v.historyTitle === current.title) ? {kind:'complete'} : null;
+    }
+    if (current.direct && current.phase === 'detail') {
+      // A navegação pode ainda estar pendente. Não usa links do cadastro anterior.
+      views = views.filter(view => {
+        try {
+          const url = new URL(view.doc.location?.href || view.win?.location?.href);
+          return url.origin === location.origin && url.pathname === '/sae/jsp/ResConsultaEleitor.jsp'
+            && url.searchParams.get('num_inscricao') === current.title;
+        } catch { return false; }
+      });
     }
     const detail = views.find(v => v.ase?.title === current.title);
     if (detail) return {kind:'ase', node:detail.ase.node};
@@ -1290,29 +1301,42 @@
     }
   }
 
-  /** Inicia a consulta pelo painel ou retorna à tela inicial para continuá-la após a navegação. */
+  /** Abre o cadastro diretamente pelo título e continua a conferência após a navegação. */
   function iniciarConsulta(event) {
     event.preventDefault();
     if (consultaEmAndamento()) return;
     const title = normalizarTitulo(panel.querySelector('[data-title]').value);
     if (!tituloValido(title)) { atualizarBotoes(); focarCampoTitulo(); return; }
-    const view = coletarQuadros().find(v => elementoVisivel(v.input) && elementoVisivel(v.consult));
-    if (view) { enviarConsulta(view, title); return; }
-    const destination = validarEnderecoInicial(home);
-    if (!destination) { atualizarMensagemPainel('Abra uma vez a tela inicial de consulta para registrar o retorno automático.'); return; }
-    // Preserva o título antes de recarregar a tela inicial, sem clicar no histórico antigo.
-    state = {phase:'query', title, updated:Date.now()};
+    home = validarEnderecoInicial(home) || new URL('/sae/jsp/ConsultaAtendimento.jsp', location.origin).href;
+    state = {phase:'query', title, direct:true, updated:Date.now()};
+    noResultSince = 0;
+    fecharPopover();
     try {
       salvarSessao();
-      fecharPopover();
-      atualizarMensagemPainel('Abrindo a consulta inicial. A nova pesquisa continuará automaticamente…');
+      atualizarMensagemPainel('Abrindo diretamente o cadastro do eleitor…');
       atualizarBotoes();
       atualizarMonitoramento();
-      window.location.assign(destination);
-    } catch (error) { interromperConsulta('Não foi possível iniciar a nova consulta. ' + error.message); }
+      enviarConsultaDireta();
+    } catch (error) { informarFalha('Não foi possível abrir o cadastro. Tente novamente.'); }
   }
 
-  /** Preenche inscrição e parâmetros nativos, captura recusas do ELO e aciona Consultar quando tudo estiver pronto. */
+  /** Aguarda o carregamento interno do ELO antes de navegar, inclusive no Firefox. */
+  function enviarConsultaDireta() {
+    if (!tituloValido(state?.title)) { informarFalha('Título inválido. Corrija os números para consultar.'); return; }
+    if (!navegacaoPronta(coletarQuadros())) {
+      atualizarMensagemPainel('Aguardando o ELO concluir o carregamento interno para abrir o cadastro…');
+      agendarVerificacao(100);
+      return;
+    }
+    const destino = new URL('/sae/jsp/ResConsultaEleitor.jsp', location.origin);
+    destino.searchParams.set('num_inscricao', state.title);
+    state.phase = 'detail';
+    state.updated = Date.now();
+    salvarSessao();
+    window.location.assign(destino.href);
+  }
+
+  /** Compatibilidade com consultas iniciadas por versões antigas, ainda salvas na sessão. */
   function enviarConsulta(view, title) {
     if (!tituloValido(title)) {
       informarFalha('Título inválido. Corrija os números para consultar.');
@@ -1514,7 +1538,7 @@
   /** Trata a espera e exige persistência da mensagem sem resultado antes de concluir uma falha. */
   function verificarEspera(views) {
     if (verificarPrazoEtapa()) return;
-    if (state.phase === 'results') {
+    if (state.phase === 'results' || (state.direct && state.phase === 'detail')) {
       if (views.some(view => possuiMensagemSemResultado(view.doc))) {
         // Exige que o aviso persista, para não confundir com a tela ainda carregando.
         noResultSince = noResultSince || Date.now();
@@ -1566,6 +1590,7 @@
       if (verificarPrazoEtapa()) return;
       const action = escolherProximaAcao(state, views);
       if (!action) { verificarEspera(views); return; }
+      if (action.kind === 'direct') { enviarConsultaDireta(); return; }
       if (action.kind === 'query') {
         enviarConsulta(action.view, state.title);
         return;
