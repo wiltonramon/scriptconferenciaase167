@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.38
+// @version      1.5.39
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -64,6 +64,7 @@
   const CONFIG = Object.freeze({
     aseCode: '167',
     absenceAseCode: '094',
+    absenceGuidanceStatuses: Object.freeze(['ATIVO', 'FACULTADO']),
     get turns() { return turnosSelecionados; },
     popoverDurationMs: 10000, // duração de todos os avisos, incluindo erros
     stepTimeoutMs: 45000,  // espera máxima em cada etapa (consulta, resultado, detalhe, histórico)
@@ -358,7 +359,7 @@
   }
 
   /** Monta somente o texto do relatório; a definição de cor e a limpeza do campo ficam na conferência. */
-  function montarRelatorioTurnos(title, found, name = '', absenceFound) {
+  function montarRelatorioTurnos(title, found, name = '', absenceFound, ausenciasParaOrientacao) {
     const heading = `ELEITOR(A): ${name.trim() || 'nome não identificado'}\nTÍTULO: ${formatarTitulo(title)}`;
     if (found?.every(Boolean)) {
       if (CONFIG.turns.length === 1) {
@@ -377,19 +378,23 @@
       const label = rotuloTurno(turn);
       const lines = [];
       if (absenceFound?.[index]) {
-        lines.push(`ASE ${CONFIG.absenceAseCode} encontrado no ${label} (${turn.date}).`);
+        const situacao = ausenciasParaOrientacao && !ausenciasParaOrientacao[index] ? 'INATIVO ' : '';
+        lines.push(`ASE ${CONFIG.absenceAseCode} ${situacao}encontrado no ${label} (${turn.date}).`);
       }
       if (found[index]) {
         lines.push(`ASE ${CONFIG.aseCode} registrado no ${label} (${turn.date}).`);
       } else if (absenceFound?.[index]) {
         lines.push(`ASE ${CONFIG.aseCode} não encontrado no ${label} (${turn.date}).`);
-        lines.push(`Registre o ASE ${CONFIG.aseCode} no ${label}, se for o caso.`);
+        if (ausenciasParaOrientacao?.[index]) lines.push(`Registre o ASE ${CONFIG.aseCode} no ${label}, se for o caso.`);
       } else if (!absenceFound) {
         lines.push(`ASE ${CONFIG.aseCode} não encontrado no ${label} (${turn.date}).`);
       }
       return lines.join('\n');
     });
     if (absence) sections.push(absence);
+    if (absenceFound && ausenciasParaOrientacao && !ausenciasParaOrientacao.some((ausencia, index) => ausencia && !found[index])) {
+      sections.push('Não há registros a serem feitos.');
+    }
     return heading + '\n' + sections.filter(Boolean).join('\n\n');
   }
 
@@ -1264,11 +1269,12 @@
       }
     }
     const absenceFound = lerAsesPorTurno(history.doc, CONFIG.absenceAseCode, ['ATIVO', 'INATIVO', 'FACULTADO']);
-    const message = montarRelatorioTurnos(history.historyTitle, found, obterNomeEleitor(history.doc, history.historyTitle), absenceFound);
-    // Uma pendência exige 094 ATIVO, INATIVO ou FACULTADO e ausência de 167 na mesma data.
-    const pending = Boolean(found && absenceFound?.some((absence, index) => absence && !found[index]));
+    const ausenciasParaOrientacao = lerAsesPorTurno(history.doc, CONFIG.absenceAseCode, CONFIG.absenceGuidanceStatuses);
+    const message = montarRelatorioTurnos(history.historyTitle, found, obterNomeEleitor(history.doc, history.historyTitle), absenceFound, ausenciasParaOrientacao);
+    // Só orienta o lançamento condicional se houver 094 ATIVO ou FACULTADO sem 167 na mesma data.
+    const pending = Boolean(found && ausenciasParaOrientacao?.some((absence, index) => absence && !found[index]));
     const tone = found?.every(Boolean) ? 'success'
-      : !found || !absenceFound ? 'warning' : pending ? 'pending' : 'success';
+      : !found || !absenceFound || !ausenciasParaOrientacao ? 'warning' : pending ? 'pending' : 'success';
     const input = panel?.querySelector('[data-title]');
     // Só considera ausência confirmada quando a leitura dos turnos selecionados foi possível.
     const noAbsence = Boolean(absenceFound && !absenceFound.some(Boolean));
@@ -1278,7 +1284,7 @@
     const saveCleared = clearInput && state?.title === history.historyTitle && !state.clearTitle;
     if (saveCleared) state.clearTitle = true;
     // O nome do eleitor aparece só na tela; o que fica salvo na sessão não o contém.
-    if (consultaEmAndamento()) concluirConsulta(message, false, montarRelatorioTurnos(history.historyTitle, found, '', absenceFound));
+    if (consultaEmAndamento()) concluirConsulta(message, false, montarRelatorioTurnos(history.historyTitle, found, '', absenceFound, ausenciasParaOrientacao));
     else {
       atualizarMensagemPainel(message);
       if (saveCleared) salvarSessao();
@@ -1386,8 +1392,8 @@
         const input = panel?.querySelector('[data-title]');
         const clearInput = !input || !input.value.trim() || normalizarTitulo(input.value) === state.title;
         if (clearInput) state.clearTitle = true;
-        concluirConsulta(montarRelatorioTurnos(state.title, empty, name, empty), true,
-          montarRelatorioTurnos(state.title, empty, '', empty));
+        concluirConsulta(montarRelatorioTurnos(state.title, empty, name, empty, empty), true,
+          montarRelatorioTurnos(state.title, empty, '', empty, empty));
         if (clearInput) limparCampoTitulo();
         return;
       }
