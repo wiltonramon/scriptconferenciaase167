@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.36
+// @version      1.5.37
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -59,6 +59,7 @@
   let eleicaoSelecionada = ELEICAO;
   let indicesTurnosSelecionados = Object.freeze(ELEICOES[ELEICAO].map((_, index) => index));
   let turnosSelecionados = Object.freeze(ELEICOES[ELEICAO].map(turn => Object.freeze({...turn})));
+  let escolhaEleitoralRecolhida = true;
 
   const CONFIG = Object.freeze({
     aseCode: '167',
@@ -188,7 +189,8 @@
   function salvarSessao() {
     // Salva a próxima etapa ANTES de um clique que possa trocar de página.
     window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition,
-      election:eleicaoSelecionada, selectedTurns:indicesTurnosSelecionados}));
+      election:eleicaoSelecionada, selectedTurns:indicesTurnosSelecionados,
+      selectionCollapsed:escolhaEleitoralRecolhida}));
   }
 
   /** Recupera a sessão e descarta consultas expiradas ou dados que não puderem ser lidos. */
@@ -198,6 +200,7 @@
       if (!saved) return;
       home = validarEnderecoInicial(saved.home);
       savedPosition = saved.position;
+      if (typeof saved.selectionCollapsed === 'boolean') escolhaEleitoralRecolhida = saved.selectionCollapsed;
       // Sessões antigas não tinham subconjunto de turnos e usavam todos os turnos do ano.
       const anoSalvo = saved.election ?? 2026;
       const indicesSalvos = saved.selectedTurns ?? ELEICOES[anoSalvo]?.map((_, index) => index);
@@ -606,6 +609,11 @@
     `,
     '[data-body]': `padding: 12px; max-height: calc(100vh - 156px); overflow-y: auto; box-sizing: border-box;`,
     '[data-election-controls]': `margin: 0 0 12px; padding: 0 0 12px; border-bottom: 1px solid #e7edf5;`,
+    '[data-election-toggle]': `display: flex; align-items: center; justify-content: space-between; gap: 8px; box-sizing: border-box; width: 100%; margin: 0; padding: 0; border: 0; background: transparent; color: #253d58; text-align: left; font: 700 12px/1.4 Arial,sans-serif; cursor: pointer;`,
+    '[data-election-copy]': `display: block; min-width: 0;`,
+    '[data-selection-summary]': `display: block; margin-top: 3px; color: #64758a; font: 11px/1.4 Arial,sans-serif;`,
+    '[data-election-chevron]': `flex: 0 0 auto; color: #64758a; font: 16px/1 Arial,sans-serif;`,
+    '[data-election-options]': `margin-top: 9px;`,
     '[data-election-label]': `display: block; margin: 0 0 5px; color: #253d58; font: 700 12px/1.4 Arial,sans-serif;`,
     '[data-election-select]': `box-sizing: border-box; width: 100%; height: 32px; margin: 0; padding: 4px 8px; border: 1px solid #cbd6e3; border-radius: 7px; background: #f8fafc; color: #253d58; font: 12px/1.4 Arial,sans-serif;`,
     '[data-turns]': `display: grid; grid-template-columns: repeat(auto-fit,minmax(112px,1fr)); gap: 6px; margin-top: 7px;`,
@@ -702,9 +710,15 @@
       </div>
       <div data-body>
         <div data-election-controls>
-          <label data-election-label for="elo-ase-eleicao">Eleição</label>
-          <select data-election-select id="elo-ase-eleicao" aria-label="Eleição"></select>
-          <div data-turns role="group" aria-label="Turnos para conferir"></div>
+          <button data-election-toggle type="button" aria-expanded="false" aria-controls="elo-ase-selecao">
+            <span data-election-copy>Eleição e turnos<span data-selection-summary></span></span>
+            <span data-election-chevron aria-hidden="true">▸</span>
+          </button>
+          <div data-election-options id="elo-ase-selecao" hidden>
+            <label data-election-label for="elo-ase-eleicao">Eleição</label>
+            <select data-election-select id="elo-ase-eleicao" aria-label="Eleição"></select>
+            <div data-turns role="group" aria-label="Turnos para conferir"></div>
+          </div>
         </div>
         <form data-form>
           <div data-input-heading>
@@ -751,7 +765,19 @@
     elemento.innerHTML = obterHtmlPainel();
     atualizarSelecaoPainel(elemento);
     aplicarEstilosPainel(elemento);
+    definirSelecaoRecolhida(escolhaEleitoralRecolhida, elemento);
     return elemento;
+  }
+
+  /** Recolhe apenas as opções eleitorais, mantendo o resumo e o restante do painel visíveis. */
+  function definirSelecaoRecolhida(recolhida, elemento = panel) {
+    escolhaEleitoralRecolhida = Boolean(recolhida);
+    if (!elemento) return;
+    elemento.querySelector('[data-election-options]').hidden = escolhaEleitoralRecolhida;
+    const botao = elemento.querySelector('[data-election-toggle]');
+    botao.setAttribute('aria-expanded', String(!escolhaEleitoralRecolhida));
+    botao.title = escolhaEleitoralRecolhida ? 'Expandir eleição e turnos' : 'Recolher eleição e turnos';
+    elemento.querySelector('[data-election-chevron]').textContent = escolhaEleitoralRecolhida ? '▸' : '▾';
   }
 
   /** Recria somente as opções de turno; não reaplica estilos que deslocariam o painel. */
@@ -785,6 +811,7 @@
       grupo.append(rotulo);
     });
     elemento.querySelector('[data-election]').textContent = `${eleicaoSelecionada} · ${CONFIG.turns.length} ${CONFIG.turns.length === 1 ? 'turno' : 'turnos'}`;
+    elemento.querySelector('[data-selection-summary]').textContent = `${eleicaoSelecionada} · ${CONFIG.turns.map(rotuloTurno).join(' e ')}`;
   }
 
   /** Invalida o resultado anterior e relê o histórico aberto no novo contexto, se houver. */
@@ -839,6 +866,10 @@
   /** Reúne os eventos dos controles. É chamada somente na criação de um painel novo. */
   function registrarEventosPainel(elemento) {
     isolarEventosDoScript(elemento);
+    elemento.querySelector('[data-election-toggle]').addEventListener('click', () => {
+      definirSelecaoRecolhida(!escolhaEleitoralRecolhida);
+      try { salvarSessao(); } catch { /* A expansão continua disponível sem armazenamento. */ }
+    });
     elemento.querySelector('[data-election-select]').addEventListener('change', alterarEleicaoPainel);
     elemento.querySelector('[data-turns]').addEventListener('change', alterarTurnosPainel);
     const campoTitulo = elemento.querySelector('[data-title]');
