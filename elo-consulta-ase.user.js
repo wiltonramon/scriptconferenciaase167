@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.41
+// @version      1.5.42
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -325,11 +325,11 @@
 
   /** Obtém o nome na linha do mesmo título, evitando nomes de outros elementos da página. */
   function obterNomeEleitor(doc, title) {
-    // Usa a linha de identificação do mesmo título, sem confundir outros <font> da página.
+    // O cadastro pode usar “Nome Civil” e o histórico, “Nome”. A inscrição valida a linha.
     for (const row of doc.querySelectorAll('tr')) {
       const cells = Array.from(row.cells);
       if (obterTituloEleitor(cells) !== title) continue;
-      const label = cells.find(cell => /^Nome:\s*$/i.test(cell.textContent.trim()));
+      const label = cells.find(cell => /^Nome(?:\s+Civil)?\s*:$/i.test(cell.textContent.trim()));
       const name = label?.nextElementSibling?.textContent.replace(/\s+/g, ' ').trim();
       if (name) return name;
     }
