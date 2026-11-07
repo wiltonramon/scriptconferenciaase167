@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.45.**
+**Versão atual: 1.5.46.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -204,3 +204,5 @@ Distribuído sob a [licença MIT](LICENSE).
 A versão 1.5.44 limita o retorno visual de cópia a um temporizador, cancela essa tarefa ao trocar o painel ou suspender a página e compartilha a seleção de linhas entre as conferências do histórico.
 
 A versão 1.5.45 abre o cadastro diretamente pelo parâmetro num_inscricao e segue para o histórico ASE. O fluxo anterior fica disponível para concluir sessões iniciadas por versões antigas.
+
+A versão 1.5.46 abre o endereço do link ASE na mesma aba após validar a origem e a inscrição, permitindo avançar a partir do cadastro direto, que não possui o quadro principal.

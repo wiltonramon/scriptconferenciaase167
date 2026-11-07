@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.45
+// @version      1.5.46
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -301,6 +301,18 @@
   function extrairTituloDoClique(link, argumentIndex) {
     const args = (link.getAttribute('onclick') || '').match(/\(\s*['"](\d+)['"](?:\s*,\s*['"]([^'"]*)['"])?/);
     return normalizarTitulo(args?.[argumentIndex + 1]);
+  }
+
+  /** Valida o endereço do histórico oferecido pelo ELO para a inscrição consultada. */
+  function obterEnderecoHistorico(link, title) {
+    try {
+      const href = link.getAttribute('href');
+      if (!href) return null;
+      const url = new URL(href, location.origin);
+      return url.origin === location.origin && url.pathname === '/sae/jsp/ConsultaHistoricoFase.jsp'
+        && url.searchParams.get('num_inscricao') === title
+        && /^\d+$/.test(url.searchParams.get('cod_objeto') || '') ? url.href : null;
+    } catch { return null; }
   }
 
   /** Identifica o eleitor sem link de histórico apenas após o carregamento completo dos detalhes. */
@@ -1626,13 +1638,21 @@
       }
       const fresh = escolherProximaAcao(state, freshViews);
       if (!fresh || fresh.kind !== action.kind || !elementoVisivel(fresh.node)) return;
+      // Na consulta direta não existe o quadro "principal" esperado pelo onclick nativo.
+      const historicoDireto = state.direct && fresh.kind === 'ase';
+      const enderecoHistorico = historicoDireto ? obterEnderecoHistorico(fresh.node, state.title) : null;
+      if (historicoDireto && !enderecoHistorico) {
+        informarFalha('O link do histórico ASE não corresponde ao título consultado ou está incompleto. Confira o cadastro.');
+        return;
+      }
       state.phase = action.kind === 'result' ? 'detail' : 'history';
       state.updated = Date.now();
       salvarSessao();
       atualizarMensagemPainel(action.kind === 'result' ? 'Abrindo o primeiro resultado. Aguardando o link ASE…'
         : 'Abertura do histórico ASE solicitada. Use o botão acima para voltar.');
       atualizarBotoes();
-      fresh.node.click();
+      if (historicoDireto) window.location.assign(enderecoHistorico);
+      else fresh.node.click();
       agendarVerificacao();
     } catch (error) {
       console.warn('[ELO ASE] Erro inesperado.', error);
