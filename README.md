@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.40.**
+**Versão atual: 1.5.41.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -57,9 +57,9 @@ Outro título que já esteja sendo preparado para a próxima consulta é preserv
 
 ## Selecionar a eleição
 
-Expanda **Eleição e turnos** e use o seletor **Eleição** para escolher 2020, 2022, 2024 ou 2026. Ao mudar o ano, todos os turnos cadastrados para ele são inicialmente marcados. Depois, marque somente os turnos que deseja conferir. Por exemplo, é possível selecionar apenas o 2º turno de 2026. Recolher a seção preserva essa escolha e mantém seu resumo visível.
+Expanda **Eleição e turnos** e use o seletor **Eleição** para escolher 2020, 2022, 2024 ou 2026. Na primeira escolha de um ano, todos os turnos cadastrados para ele são marcados. Depois, marque somente os turnos que deseja conferir. Ao trocar de ano e voltar, o painel recupera os turnos escolhidos anteriormente para aquela eleição. Por exemplo, é possível selecionar apenas o 2º turno de 2026. Recolher a seção preserva essa escolha e mantém seu resumo visível.
 
-A preferência de ano e turnos fica salva na sessão da aba e acompanha a navegação e a recriação do painel. Durante uma consulta, os seletores ficam desativados; use **Parar** se precisar interromper a execução para mudar a seleção.
+As preferências de turnos são guardadas separadamente para cada eleição na sessão da aba e acompanham a navegação, o recarregamento da página e a recriação do painel. Por exemplo, ao desmarcar o 2º turno de 2020, escolher 2026 e voltar a 2020, somente o 1º turno continuará marcado. Durante uma consulta, os seletores ficam desativados; use **Parar** se precisar interromper a execução para mudar a seleção.
 
 Os conjuntos disponíveis ficam no objeto `ELEICOES`, no início do código. Para adicionar outra eleição, cadastre uma nova chave e sua lista de turnos. O seletor do painel será preenchido com os conjuntos cadastrados.
 
@@ -180,7 +180,7 @@ Os nomes das APIs externas, seletores do ELO e propriedades salvas na sessão s�
 
 Os resultados salvos incluem uma assinatura da eleição, turnos, datas, códigos e situações que podem gerar orientação. Se essa configuração mudar, a seleção e a posição são recuperadas, mas uma nova consulta é solicitada. Sessões antigas sem assinatura também passam por essa validação antes de retomar uma consulta.
 
-Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.40 acrescenta os dois turnos de 2020 e o segundo turno de 2024, e impede a recuperação de resultados calculados com configurações anteriores. As situações que podem gerar orientação continuam em `CONFIG.absenceGuidanceStatuses`. O valor inicial continua sendo `ELEICAO = 2026`.
+Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.41 preserva as preferências de turnos de cada eleição ao alternar entre anos e ao recuperar a sessão. Preferências inválidas de outros anos são ignoradas, e sessões anteriores mantêm sua seleção atual. As situações que podem gerar orientação continuam em `CONFIG.absenceGuidanceStatuses`. O valor inicial continua sendo `ELEICAO = 2026`.
 
 ## Escopo e dados temporários
 
@@ -188,7 +188,7 @@ Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos ar
 - Depende da sessão autenticada e do acesso regular do usuário ao ELO.
 - Consulta e confere registros. Não lança ASE nem altera o cadastro eleitoral.
 - Não utiliza bibliotecas externas nem envia os dados consultados para outros serviços.
-- Usa `sessionStorage` para manter eleição e turnos selecionados, título, etapa, resultado, endereço de retorno e posição do painel entre navegações. O nome exibido nos relatórios é omitido da mensagem salva na sessão.
+- Usa `sessionStorage` para manter eleição selecionada, preferências de turnos por eleição, título, etapa, resultado, endereço de retorno e posição do painel entre navegações. O nome exibido nos relatórios é omitido da mensagem salva na sessão.
 - Confere as linhas disponíveis na tabela carregada; não percorre automaticamente eventual paginação do histórico.
 
 ## Licença
