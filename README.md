@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.41.**
+**Versão atual: 1.5.42.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -110,6 +110,8 @@ O script usa a configuração escolhida no código; não identifica automaticame
 | Vermelha | Aviso de falha, como recusa do título pelo ELO, consulta sem resultado ou prazo de etapa excedido. |
 
 Quando o ASE 167 é identificado em todos os turnos selecionados, o aviso é verde mesmo que a conferência do ASE 094 não esteja disponível. Nome e título identificam o resultado; se o nome não for obtido, aparece `ELEITOR(A): nome não identificado`.
+
+No aviso de eleitor sem histórico ASE, o script lê o campo **Nome Civil** na linha da inscrição consultada.
 
 ### Exemplo: apenas o primeiro turno de 2024
 
