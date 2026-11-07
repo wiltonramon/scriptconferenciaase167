@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.46
+// @version      1.5.47
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -306,9 +306,18 @@
   /** Valida o endereço do histórico oferecido pelo ELO para a inscrição consultada. */
   function obterEnderecoHistorico(link, title) {
     try {
-      const href = link.getAttribute('href');
-      if (!href) return null;
-      const url = new URL(href, location.origin);
+      const href = (link.getAttribute('href') || '').trim();
+      let url;
+      if (!href || href === '#') {
+        // Algumas telas mantêm apenas os parâmetros no onclick. Lê os literais sem executar JavaScript.
+        const args = (link.getAttribute('onclick') || '').match(/^\s*ConsultaHistoricoFase\(\s*['"](\d+)['"]\s*,\s*['"](\d{12})['"]\s*,\s*(['"])((?:\\.|(?!\3)[\s\S])*)\3\s*,\s*(\d+)\s*,\s*event\s*\)\s*;?\s*$/);
+        if (!args || args[2] !== title || /\\(?!['"\\])/.test(args[4])) return null;
+        url = new URL('/sae/jsp/ConsultaHistoricoFase.jsp', location.origin);
+        url.searchParams.set('cod_objeto', args[1]);
+        url.searchParams.set('num_inscricao', args[2]);
+        url.searchParams.set('nom_eleitor', args[4].replace(/\\(['"\\])/g, '$1'));
+        url.searchParams.set('cod_sit_eleitor', args[5]);
+      } else url = new URL(href, location.origin);
       return url.origin === location.origin && url.pathname === '/sae/jsp/ConsultaHistoricoFase.jsp'
         && url.searchParams.get('num_inscricao') === title
         && /^\d+$/.test(url.searchParams.get('cod_objeto') || '') ? url.href : null;
