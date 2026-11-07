@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.39
+// @version      1.5.40
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -42,12 +42,17 @@
   const LIMIT = 120000;
   // Cadastre aqui os conjuntos de turnos. A conferência usa somente o conjunto escolhido.
   const ELEICOES = {
+    2020: [
+      {label:'1º turno', date:'15/11/2020'},
+      {label:'2º turno', date:'29/11/2020'}
+    ],
     2022: [
       {label:'1º turno', date:'02/10/2022'},
       {label:'2º turno', date:'30/10/2022'}
     ],
     2024: [
-      {label:'1º turno', date:'06/10/2024'}
+      {label:'1º turno', date:'06/10/2024'},
+      {label:'2º turno', date:'27/10/2024'}
     ],
     2026: [
       {label:'1º turno', date:'04/10/2026'},
@@ -181,9 +186,16 @@
     return true;
   }
 
-  /** Separa o cache por eleição e subconjunto de turnos, inclusive para o mesmo eleitor. */
+  /** Identifica a seleção e as regras usadas no resultado, para validar cache e sessão. */
   function chaveContextoEleitoral() {
-    return `${eleicaoSelecionada}:${indicesTurnosSelecionados.join(',')}`;
+    return JSON.stringify({
+      election:eleicaoSelecionada,
+      selectedTurns:indicesTurnosSelecionados,
+      turns:CONFIG.turns,
+      ase:CONFIG.aseCode,
+      absenceAse:CONFIG.absenceAseCode,
+      guidanceStatuses:CONFIG.absenceGuidanceStatuses
+    });
   }
 
   /** Persiste a seleção junto da consulta, sem gravar o nome do eleitor. */
@@ -191,7 +203,7 @@
     // Salva a próxima etapa ANTES de um clique que possa trocar de página.
     window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition,
       election:eleicaoSelecionada, selectedTurns:indicesTurnosSelecionados,
-      selectionCollapsed:escolhaEleitoralRecolhida}));
+      selectionCollapsed:escolhaEleitoralRecolhida, queryContext:chaveContextoEleitoral()}));
   }
 
   /** Recupera a sessão e descarta consultas expiradas ou dados que não puderem ser lidos. */
@@ -208,6 +220,13 @@
       if (!aplicarSelecaoEleitoral(anoSalvo, indicesSalvos)) {
         state = null;
         statusText = 'A seleção anterior não está disponível. Escolha a eleição e os turnos para consultar.';
+        return;
+      }
+      // Prefere uma nova consulta a apresentar um resultado baseado em datas ou regras antigas.
+      // Sessões sem assinatura também são migradas, mantendo as preferências do painel.
+      if (saved.state && saved.queryContext !== chaveContextoEleitoral()) {
+        state = null;
+        statusText = 'Configuração da conferência atualizada. Inicie uma nova consulta.';
         return;
       }
       if (estadoValido(saved.state)) state = saved.state;
