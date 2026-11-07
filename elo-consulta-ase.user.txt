@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.42
+// @version      1.5.43
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -19,8 +19,10 @@
    * - TIMEOUT_MESSAGES: mensagens de prazo excedido por etapa da consulta.
    * - montarRelatorioTurnos/relatarAusencias: redação dos resultados exibidos.
    * - lerAsesPorTurno/conferirHistorico: leitura, pendências, cores e limpeza do título.
-   * - obterHtmlPainel/ESTILOS_PAINEL: estrutura e estilos do painel.
-   * - registrarEventosPainel/habilitarArrastePainel: controles, atalhos e arraste.
+   * - obterHtmlPainel/ESTILOS_PAINEL/CSS_ESTADOS_PAINEL: estrutura, estilos e estados (foco, mouse).
+   * - TONS_STATUS/aplicarTomStatus/copiarStatus: cor persistente do resultado e botão Copiar.
+   * - posicionarPainel: posição e altura dentro da janela.
+   * - registrarEventosPainel/habilitarArrastePainel: controles, atalhos, arraste e redimensionamento.
    * - definirPainelRecolhido/exibirBotaoRestaurarPainel: minimização e restauração.
    * - exibirPopover: apresentação dos avisos.
    * - escolherProximaAcao/executarCiclo: sequência de navegação no ELO.
@@ -38,6 +40,8 @@
   catch { return; }
 
   const KEY = 'elo.consultaASE.v1';
+  // A posição do painel também fica fora da sessão, para valer em novas abas e dias.
+  const KEY_POSICAO = 'elo.consultaASE.painel.posicao';
   const PANEL = 'elo-consulta-ase-painel';
   const LIMIT = 120000;
   // Cadastre aqui os conjuntos de turnos. A conferência usa somente o conjunto escolhido.
@@ -95,6 +99,9 @@
   let panel = null;
   let botaoRestaurarPainel = null;
   let statusText = 'Informe o título e clique em Consultar ASE.';
+  let statusTone = 'neutral';
+  let falhaSalva = null;
+  let removerOuvinteResize = null;
   let running = false;
   let timer = null;
   let pendingTick = null;
@@ -212,9 +219,25 @@
   function salvarSessao() {
     // Salva a próxima etapa ANTES de um clique que possa trocar de página.
     window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition,
+      failure:state ? null : falhaSalva,
       election:eleicaoSelecionada, selectedTurns:indicesTurnosSelecionados,
       turnsByElection:turnosPorEleicao,
       selectionCollapsed:escolhaEleitoralRecolhida, queryContext:chaveContextoEleitoral()}));
+  }
+
+  /** Lê a última posição do painel guardada fora da sessão; devolve null se ausente ou inválida. */
+  function lerPosicaoPersistida() {
+    try {
+      const posicao = JSON.parse(window.localStorage.getItem(KEY_POSICAO) || 'null');
+      return Number.isFinite(posicao?.x) && Number.isFinite(posicao?.y) ? {x:posicao.x, y:posicao.y} : null;
+    } catch { return null; }
+  }
+
+  /** Guarda a posição do painel para as próximas abas; falhas de armazenamento são ignoradas. */
+  function gravarPosicaoPersistida() {
+    try {
+      if (savedPosition) window.localStorage.setItem(KEY_POSICAO, JSON.stringify(savedPosition));
+    } catch { /* A posição continua valendo nesta sessão. */ }
   }
 
   /** Recupera a sessão e descarta consultas expiradas ou dados que não puderem ser lidos. */
@@ -240,13 +263,17 @@
       }
       // Prefere uma nova consulta a apresentar um resultado baseado em datas ou regras antigas.
       // Sessões sem assinatura também são migradas, mantendo as preferências do painel.
-      if (saved.state && saved.queryContext !== chaveContextoEleitoral()) {
+      if ((saved.state || saved.failure) && saved.queryContext !== chaveContextoEleitoral()) {
         state = null;
         statusText = 'Configuração da conferência atualizada. Inicie uma nova consulta.';
         return;
       }
       if (estadoValido(saved.state)) state = saved.state;
       else if (saved.state) statusText = 'Consulta anterior expirada. Inicie uma nova consulta.';
+      else if (typeof saved.failure?.message === 'string' && Number.isFinite(saved.failure.updated)) {
+        const idade = Date.now() - saved.failure.updated;
+        if (idade >= 0 && idade < LIMIT) falhaSalva = saved.failure;
+      }
     } catch { statusText = 'Não foi possível recuperar a consulta anterior.'; }
   }
 
@@ -481,11 +508,72 @@
 
   // 7. Painel: montagem, entrada e interação
 
-  /** Atualiza a mensagem persistente do painel usando texto, sem interpretar HTML. */
-  function atualizarMensagemPainel(text) {
+  /** Atualiza a mensagem persistente do painel usando texto, sem interpretar HTML. O tom colore o resultado. */
+  function atualizarMensagemPainel(text, tone = 'neutral') {
+    falhaSalva = null;
+    const mudou = statusText !== text || statusTone !== tone;
     statusText = text;
+    statusTone = Object.hasOwn(TONS_STATUS, tone) ? tone : 'neutral';
     const status = panel?.querySelector('[data-status]');
     if (status && status.textContent !== text) status.textContent = text;
+    if (mudou && panel) panel.querySelector('[data-copy]').textContent = 'Copiar';
+    aplicarTomStatus();
+  }
+
+  /** Mantém no painel a cor do resultado (mesmas cores dos avisos) depois que o aviso some. */
+  function aplicarTomStatus(elemento = panel) {
+    const secao = elemento?.querySelector('[data-status-section]');
+    if (!secao) return;
+    const tom = TONS_STATUS[statusTone] || TONS_STATUS.neutral;
+    secao.style.background = tom.fundo;
+    secao.style.borderColor = tom.borda;
+    secao.style.borderLeftColor = tom.destaque;
+    elemento.querySelector('[data-status]').style.color = tom.texto;
+    // Só resultados e falhas podem ser copiados; mensagens de andamento não.
+    const copiar = elemento.querySelector('[data-copy]');
+    if (copiar) {
+      copiar.disabled = statusTone === 'neutral';
+      copiar.style.opacity = copiar.disabled ? '0.45' : '1';
+      copiar.style.cursor = copiar.disabled ? 'not-allowed' : 'pointer';
+    }
+  }
+
+  /** Copia o texto do resultado exibido no painel, com alternativa para navegadores sem Clipboard API. */
+  async function copiarStatus() {
+    const elemento = panel;
+    const texto = elemento?.querySelector('[data-status]')?.textContent;
+    const botao = elemento?.querySelector('[data-copy]');
+    if (!texto || !botao || botao.disabled) return;
+    const doc = elemento.ownerDocument;
+    let copiado = false;
+    try {
+      const clipboard = doc.defaultView?.navigator?.clipboard;
+      if (clipboard?.writeText) {
+        await clipboard.writeText(texto);
+        copiado = true;
+      }
+    } catch { /* A alternativa abaixo também funciona sem a Clipboard API. */ }
+
+    // A consulta ou o quadro podem ter mudado enquanto o navegador respondia.
+    if (panel !== elemento || statusText !== texto || botao.disabled) return;
+    if (!copiado) {
+      const foco = doc.activeElement;
+      const area = doc.createElement('textarea');
+      try {
+        area.value = texto;
+        area.setAttribute('readonly', '');
+        area.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none';
+        elemento.append(area);
+        area.select();
+        copiado = Boolean(doc.execCommand?.('copy'));
+      } catch { /* O retorno do botão informa a falha de cópia. */ }
+      finally {
+        area.remove();
+        if (foco?.isConnected) foco.focus({preventScroll:true});
+      }
+    }
+    botao.textContent = copiado ? 'Copiado ✓' : 'Falhou';
+    window.setTimeout(() => { if (botao.isConnected) botao.textContent = 'Copiar'; }, 1600);
   }
 
   /** Atualiza validação, orientação e disponibilidade dos botões de acordo com a entrada e a etapa. */
@@ -574,7 +662,7 @@
     button.setAttribute('aria-label', recolhido ? 'Restaurar painel' : 'Minimizar painel');
     button.setAttribute('aria-expanded', String(!recolhido));
     if (recolhido) exibirBotaoRestaurarPainel();
-    else removerBotaoRestaurarPainel();
+    else { removerBotaoRestaurarPainel(); posicionarPainel(panel); }
   }
 
   /** Foca o campo apenas quando ele está conectado e visível; pode selecionar seu conteúdo. */
@@ -616,7 +704,7 @@
   const ESTILOS_PAINEL = Object.freeze({
     raiz: `
       position: fixed; top: 80px; right: 20px;
-      width: 292px; max-width: calc(100vw - 24px);
+      width: 320px; max-width: calc(100vw - 24px);
       z-index: 2147483647; box-sizing: border-box;
       background: #fff; color: #172b45;
       border: 1px solid #d9e2ee; border-radius: 14px;
@@ -628,7 +716,7 @@
       display: flex; align-items: center; justify-content: space-between;
       gap: 10px; padding: 12px;
       background: #f7f9fc; border-bottom: 1px solid #e7edf5;
-      cursor: move; touch-action: none;
+      cursor: move; touch-action: none; user-select: none;
     `,
     '[data-brand]': `display: flex; align-items: center; gap: 9px; min-width: 0;`,
     '[data-brand-mark]': `
@@ -646,6 +734,7 @@
       border: 1px solid #dce4ee; border-radius: 8px;
       font: 20px/1 Arial,sans-serif; cursor: pointer;
     `,
+    // A altura máxima é recalculada por posicionarPainel, conforme a altura da janela.
     '[data-body]': `padding: 12px; max-height: calc(100vh - 156px); overflow-y: auto; box-sizing: border-box;`,
     '[data-election-controls]': `margin: 0 0 12px; padding: 0 0 12px; border-bottom: 1px solid #e7edf5;`,
     '[data-election-toggle]': `display: flex; align-items: center; justify-content: space-between; gap: 8px; box-sizing: border-box; width: 100%; margin: 0; padding: 0; border: 0; background: transparent; color: #253d58; text-align: left; font: 700 12px/1.4 Arial,sans-serif; cursor: pointer;`,
@@ -661,7 +750,7 @@
     '[data-form]': `margin: 0; padding: 0;`,
     '[data-input-heading]': `display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 6px;`,
     'label[for="elo-ase-titulo"]': `display: block; margin: 0; color: #253d58; font: 700 12px/1.4 Arial,sans-serif;`,
-    '[data-shortcut]': `font: 10px/1.4 Arial,sans-serif; color: #64758a; white-space: nowrap;`,
+    '[data-shortcut]': `font: 11px/1.4 Arial,sans-serif; color: #5b6d82; white-space: nowrap;`,
     '[data-title-wrapper]': `position: relative;`,
     '[data-title]': `
       box-sizing: border-box; width: 100%; min-width: 0;
@@ -681,11 +770,11 @@
       font: 11px/1.45 Arial,sans-serif; color: #526577;
     `,
     '[data-submit]': `
-      box-sizing: border-box; width: 100%; min-height: 38px;
+      box-sizing: border-box; width: 100%; min-height: 40px;
       margin: 9px 0 0; padding: 9px 12px; appearance: none;
       border: 1px solid #174975; border-radius: 8px;
       background: #174975; color: #fff;
-      font: 700 13px/1.4 Arial,sans-serif; cursor: pointer;
+      font: 700 14px/1.4 Arial,sans-serif; cursor: pointer;
     `,
     '[data-actions]': `display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;`,
     '[data-return]': `
@@ -702,16 +791,46 @@
       background: #fff7f7; color: #9d3434;
       font: 600 12px/1.4 Arial,sans-serif; cursor: pointer;
     `,
-    '[data-status-section]': `margin-top: 12px; padding: 10px; border: 1px solid #e5ebf3; border-radius: 9px; background: #f8fafc;`,
+    '[data-status-section]': `margin-top: 12px; padding: 10px; border: 1px solid #e5ebf3; border-left: 4px solid #cbd6e3; border-radius: 9px; background: #f8fafc;`,
     '[data-status-heading]': `display: flex; align-items: center; justify-content: space-between; gap: 8px;`,
     '[data-status-label]': `font: 700 10px/1.4 Arial,sans-serif; letter-spacing: .7px; text-transform: uppercase; color: #61748b;`,
+    '[data-status-tools]': `display: flex; align-items: center; gap: 6px;`,
     '[data-activity]': `padding: 2px 6px; border-radius: 4px; background: #e9eff6; color: #425e7d; font: 600 10px/1.4 Arial,sans-serif; white-space: nowrap;`,
+    '[data-copy]': `margin: 0; padding: 2px 8px; appearance: none; border: 1px solid #cbd6e3; border-radius: 5px; background: #fff; color: #344f6d; font: 600 10px/1.5 Arial,sans-serif; white-space: nowrap; cursor: pointer;`,
     '[data-status]': `
       margin: 7px 0 0; max-height: 150px; overflow-y: auto;
       font: 12px/1.55 Arial,sans-serif; color: #344b65;
       white-space: pre-line; overflow-wrap: anywhere;
     `
   });
+
+  // Cores do resultado no painel; seguem as dos avisos para o usuário reconhecer o estado.
+  const TONS_STATUS = Object.freeze({
+    neutral: Object.freeze({fundo:'#f8fafc', borda:'#e5ebf3', destaque:'#cbd6e3', texto:'#344b65'}),
+    success: Object.freeze({fundo:'#edf9f0', borda:'#bfe3c9', destaque:'#278046', texto:'#14562b'}),
+    pending: Object.freeze({fundo:'#fff0df', borda:'#f1c79a', destaque:'#d96b00', texto:'#7a3500'}),
+    warning: Object.freeze({fundo:'#fff8e6', borda:'#ecd199', destaque:'#c58a14', texto:'#593b00'}),
+    error:   Object.freeze({fundo:'#fdecec', borda:'#efb6b2', destaque:'#b3261e', texto:'#6b130e'})
+  });
+
+  // Estados que o estilo inline não alcança (foco, passagem do mouse, turno marcado).
+  // O escopo pelo id do painel evita qualquer efeito sobre a página do ELO.
+  const CSS_ESTADOS_PAINEL = `
+    #${PANEL} button:focus-visible,
+    #${PANEL} select:focus-visible,
+    #${PANEL} [data-status]:focus-visible { outline: 3px solid #f5b942 !important; outline-offset: 2px !important; }
+    #${PANEL} [data-title]:focus { outline: 3px solid #9cc4e8 !important; outline-offset: 1px !important; }
+    #${PANEL} [data-collapse]:hover,
+    #${PANEL} [data-copy]:not(:disabled):hover { background: #eaf2fa !important; }
+    #${PANEL} [data-clear-title]:hover { background: #e8eef4 !important; }
+    #${PANEL} [data-submit]:not(:disabled):hover { background: #1f5f98 !important; }
+    #${PANEL} [data-return]:not(:disabled):hover { background: #eaf2fa !important; }
+    #${PANEL} [data-cancel]:not(:disabled):hover { background: #fdecec !important; }
+    #${PANEL} [data-turn-option]:hover { border-color: #9cc4e8 !important; }
+  `;
+  const CSS_TURNO_MARCADO = `
+    #${PANEL} [data-turn-option]:has(input:checked) { background: #e6f0fa !important; border-color: #9cc4e8 !important; }
+  `;
 
   // Atalho independente do painel: não altera a posição salva para o tamanho normal.
   const ESTILO_BOTAO_RESTAURAR_PAINEL = `
@@ -765,7 +884,7 @@
           </div>
           <div data-title-wrapper>
             <input id="elo-ase-titulo" data-title type="text" inputmode="numeric"
-              aria-describedby="elo-ase-titulo-feedback" autocomplete="off"
+              aria-describedby="elo-ase-titulo-feedback" autocomplete="off" spellcheck="false"
               maxlength="20" placeholder="0000 0000 0000">
             <button data-clear-title type="button" aria-label="Limpar título" title="Limpar título (Esc)">×</button>
           </div>
@@ -779,10 +898,14 @@
         <div data-status-section>
           <div data-status-heading>
             <span data-status-label>Acompanhamento</span>
-            <span data-activity>Pronto</span>
+            <span data-status-tools>
+              <span data-activity>Pronto</span>
+              <button data-copy type="button" title="Copiar o resultado" aria-label="Copiar o resultado">Copiar</button>
+            </span>
           </div>
           <p data-status role="status" aria-live="polite" tabindex="0"></p>
         </div>
+        <style data-elo-ase-estados></style>
       </div>
     `;
   }
@@ -803,6 +926,13 @@
     elemento.innerHTML = obterHtmlPainel();
     atualizarSelecaoPainel(elemento);
     aplicarEstilosPainel(elemento);
+    // O CSS é texto puro; a regra com :has fica separada para não invalidar as demais em navegadores antigos.
+    const estados = elemento.querySelector('[data-elo-ase-estados]');
+    estados.textContent = CSS_ESTADOS_PAINEL;
+    const turnoMarcado = doc.createElement('style');
+    turnoMarcado.textContent = CSS_TURNO_MARCADO;
+    estados.after(turnoMarcado);
+    aplicarTomStatus(elemento);
     definirSelecaoRecolhida(escolhaEleitoralRecolhida, elemento);
     return elemento;
   }
@@ -880,7 +1010,7 @@
       .filter(controle => controle.checked).map(controle => Number(controle.value));
     if (!alterarSelecaoEleitoral(eleicaoSelecionada, indices)) {
       atualizarSelecaoPainel();
-      if (!consultaEmAndamento()) atualizarMensagemPainel('Mantenha pelo menos um turno selecionado.');
+      if (!consultaEmAndamento()) atualizarMensagemPainel('Mantenha pelo menos um turno selecionado.', 'warning');
     }
     atualizarBotoes();
   }
@@ -915,6 +1045,7 @@
     elemento.querySelector('[data-clear-title]').addEventListener('click', limparCampoTitulo);
     elemento.querySelector('[data-form]').addEventListener('submit', iniciarConsulta);
     elemento.querySelector('[data-return]').addEventListener('click', voltarConsultaInicial);
+    elemento.querySelector('[data-copy]').addEventListener('click', copiarStatus);
     elemento.querySelector('[data-cancel]').addEventListener('click', () => {
       interromperConsulta('Automação interrompida. Você pode voltar à consulta inicial.');
     });
@@ -923,12 +1054,25 @@
     });
   }
 
-  /** Restaura a posição salva dentro dos limites do quadro, mantendo as margens existentes. */
-  function restaurarPosicaoPainel(elemento, janela) {
-    if (!Number.isFinite(savedPosition?.x) || !Number.isFinite(savedPosition?.y)) return;
+  /** Reaplica a posição preferida dentro do quadro atual e limita o conteúdo ao espaço disponível. */
+  function posicionarPainel(elemento, posicao = savedPosition) {
+    const janela = elemento.ownerDocument.defaultView;
+    if (!janela || elemento.hidden) return posicao;
+    const alturaCabecalho = elemento.querySelector('[data-handle]').offsetHeight;
+    const margem = 12;
+    const bordas = 2;
+    const maxY = Math.max(0, janela.innerHeight - alturaCabecalho - bordas - margem - 140);
+    const posicaoValida = Number.isFinite(posicao?.x) && Number.isFinite(posicao?.y);
+    const y = Math.max(0, Math.min(posicaoValida ? posicao.y : 80, maxY));
+    const alturaPainel = Math.max(0, janela.innerHeight - y - margem);
+    elemento.style.top = y + 'px';
+    elemento.style.maxHeight = alturaPainel + 'px';
+    elemento.querySelector('[data-body]').style.maxHeight = Math.max(0, alturaPainel - alturaCabecalho - bordas) + 'px';
+    if (!posicaoValida) return null;
+    const x = Math.max(0, Math.min(posicao.x, janela.innerWidth - elemento.offsetWidth));
     elemento.style.right = 'auto';
-    elemento.style.left = Math.max(0, Math.min(savedPosition.x, janela.innerWidth - 300)) + 'px';
-    elemento.style.top = Math.max(0, Math.min(savedPosition.y, janela.innerHeight - 50)) + 'px';
+    elemento.style.left = x + 'px';
+    return {x, y};
   }
 
   /** Mantém o arraste restrito ao cabeçalho e salva a posição somente ao soltá-lo. */
@@ -946,24 +1090,24 @@
 
     function moverPainel(evento) {
       if (!arraste) return;
-      const x = Math.max(0, Math.min(evento.clientX - arraste.x, janela.innerWidth - elemento.offsetWidth));
-      const y = Math.max(0, Math.min(evento.clientY - arraste.y, janela.innerHeight - 44));
-      elemento.style.right = 'auto';
-      elemento.style.left = x + 'px';
-      elemento.style.top = y + 'px';
-      savedPosition = {x, y};
+      savedPosition = posicionarPainel(elemento, {x:evento.clientX - arraste.x, y:evento.clientY - arraste.y});
     }
 
     function concluirArraste() {
       if (!arraste) return;
       arraste = null;
       try { salvarSessao(); } catch { /* O arraste continua disponível sem armazenamento. */ }
+      gravarPosicaoPersistida();
     }
 
     cabecalho.addEventListener('pointerdown', iniciarArraste);
     cabecalho.addEventListener('pointermove', moverPainel);
     cabecalho.addEventListener('pointerup', concluirArraste);
     cabecalho.addEventListener('pointercancel', concluirArraste);
+    // Redimensionar o quadro ajusta a exibição sem sobrescrever a posição escolhida pelo usuário.
+    const aoRedimensionar = () => posicionarPainel(elemento);
+    janela.addEventListener('resize', aoRedimensionar);
+    removerOuvinteResize = () => janela.removeEventListener('resize', aoRedimensionar);
   }
 
   /** Coordena a montagem e a restauração do painel quando o ELO substitui seu documento. */
@@ -977,6 +1121,8 @@
       : state && !state.clearTitle ? formatarTitulo(state.title) : '';
     const estavaRecolhido = Boolean(panel?.hidden);
     removerBotaoRestaurarPainel();
+    removerOuvinteResize?.();
+    removerOuvinteResize = null;
     panel?.remove();
 
     panel = criarPainel(quadro.doc);
@@ -984,7 +1130,6 @@
     quadro.doc.body.append(panel);
     panel.querySelector('[data-title]').value = rascunho;
     panel.querySelector('[data-status]').textContent = statusText;
-    restaurarPosicaoPainel(panel, quadro.win);
     habilitarArrastePainel(panel, quadro.win);
 
     definirPainelRecolhido(estavaRecolhido);
@@ -1232,7 +1377,7 @@
   function tratarConsultaRecusada(title, alerts) {
     const reason = alerts.filter(Boolean).join(' ') || 'motivo não informado.';
     const message = `O ELO recusou o título ${formatarTitulo(title)}: ${reason}`;
-    interromperConsulta(message);
+    interromperConsulta(message, 'error', `O ELO recusou o título ${formatarTitulo(title)}. Corrija o título e consulte novamente.`);
     definirPainelRecolhido(false);
     exibirPopover(message + '\nCorrija o título e consulte novamente.', panel?.ownerDocument, 'error');
     focarCampoTitulo(true);
@@ -1248,23 +1393,25 @@
   }
 
   /** Interrompe a automação e mantém o painel disponível para correção ou nova consulta. */
-  function interromperConsulta(message) {
+  function interromperConsulta(message, tone = 'neutral', mensagemParaSessao = message) {
     fecharPopover();
     state = null;
     noResultSince = 0;
     atualizarMonitoramento();
+    atualizarMensagemPainel(message, tone);
+    if (tone === 'error') falhaSalva = {message:mensagemParaSessao, updated:Date.now()};
     try { salvarSessao(); } catch { /* Ainda permite parar se o armazenamento estiver indisponível. */ }
-    atualizarMensagemPainel(message);
     atualizarBotoes();
   }
 
   /** Conclui e salva a consulta. Recebe separadamente o texto sem nome que pode ficar na sessão. */
-  function concluirConsulta(message, noAse = false, storedMessage = message) {
+  function concluirConsulta(message, noAse = false, storedMessage = message, tone = 'neutral') {
     state.phase = 'done';
     state.message = storedMessage;
+    state.tone = tone;
     state.updated = Date.now();
     salvarSessao();
-    atualizarMensagemPainel(message);
+    atualizarMensagemPainel(message, tone);
     if (noAse) {
       definirPainelRecolhido(false);
       exibirPopover(message, panel?.ownerDocument, 'success');
@@ -1274,7 +1421,7 @@
 
   /** Interrompe com aviso de erro e devolve o foco ao campo para correção. */
   function informarFalha(message) {
-    interromperConsulta(message);
+    interromperConsulta(message, 'error');
     definirPainelRecolhido(false);
     exibirPopover(message, panel?.ownerDocument, 'error');
     focarCampoTitulo(true);
@@ -1319,9 +1466,9 @@
     const saveCleared = clearInput && state?.title === history.historyTitle && !state.clearTitle;
     if (saveCleared) state.clearTitle = true;
     // O nome do eleitor aparece só na tela; o que fica salvo na sessão não o contém.
-    if (consultaEmAndamento()) concluirConsulta(message, false, montarRelatorioTurnos(history.historyTitle, found, '', absenceFound, ausenciasParaOrientacao));
+    if (consultaEmAndamento()) concluirConsulta(message, false, montarRelatorioTurnos(history.historyTitle, found, '', absenceFound, ausenciasParaOrientacao), tone);
     else {
-      atualizarMensagemPainel(message);
+      atualizarMensagemPainel(message, tone);
       if (saveCleared) salvarSessao();
     }
     exibirPopover(message, history.doc, tone);
@@ -1428,7 +1575,7 @@
         const clearInput = !input || !input.value.trim() || normalizarTitulo(input.value) === state.title;
         if (clearInput) state.clearTitle = true;
         concluirConsulta(montarRelatorioTurnos(state.title, empty, name, empty, empty), true,
-          montarRelatorioTurnos(state.title, empty, '', empty, empty));
+          montarRelatorioTurnos(state.title, empty, '', empty, empty), 'success');
         if (clearInput) limparCampoTitulo();
         return;
       }
@@ -1453,7 +1600,8 @@
       console.warn('[ELO ASE] Erro inesperado.', error);
       const detail = (typeof error === 'string' ? error
         : typeof error?.message === 'string' ? error.message : '').trim() || 'motivo não informado';
-      interromperConsulta(`Automação interrompida por erro inesperado: ${detail}\nConfira o console (F12) para mais detalhes ou tente novamente.`);
+      interromperConsulta(`Automação interrompida por erro inesperado: ${detail}\nConfira o console (F12) para mais detalhes ou tente novamente.`,
+        'error', 'Automação interrompida por erro inesperado. Confira o console (F12) ou tente novamente.');
     }
     finally { running = false; atualizarMonitoramento(); }
   }
@@ -1461,8 +1609,16 @@
   /** Restaura a sessão, executa o primeiro ciclo e trata saída e retorno pelo histórico do navegador. */
   function inicializar() {
     restaurarSessao();
-    if (state) statusText = state.phase === 'done' ? (state.message || 'Use Voltar à consulta inicial para uma nova pesquisa.')
-      : 'Continuando a consulta. Aguardando a página carregar…';
+    // Sem posição na sessão (aba nova), usa a última posição escolhida pelo usuário.
+    if (!Number.isFinite(savedPosition?.x) || !Number.isFinite(savedPosition?.y)) savedPosition = lerPosicaoPersistida();
+    if (state) {
+      statusText = state.phase === 'done' ? (state.message || 'Use Voltar à consulta inicial para uma nova pesquisa.')
+        : 'Continuando a consulta. Aguardando a página carregar…';
+      statusTone = state.phase === 'done' && Object.hasOwn(TONS_STATUS, state.tone) ? state.tone : 'neutral';
+    } else if (falhaSalva) {
+      statusText = falhaSalva.message;
+      statusTone = 'error';
+    }
     executarCiclo();
     window.addEventListener('pagehide', () => { suspended = true; encerrarMonitoramento(); fecharPopover(); });
     window.addEventListener('pageshow', e => { if (e.persisted) { suspended = false; executarCiclo(); focarCampoTitulo(); } });

@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.42.**
+**Versão atual: 1.5.43.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -37,11 +37,13 @@ Se houver outros filtros preenchidos no formulário original do ELO, o script pe
 
 O painel tem visual compacto, com o ano e os turnos selecionados apresentados uma única vez, no resumo de **Eleição e turnos**. A consulta fica em destaque, os botões **Voltar** e **Parar** aparecem lado a lado e a área **Acompanhamento** mantém as mensagens completas, com rolagem quando necessário. Durante a execução, o botão principal mostra **Consultando…** e o indicador mostra **Em consulta**.
 
+O bloco **Acompanhamento** mantém a cor do resultado depois que o popover fecha. O botão **Copiar** copia a mensagem exibida e fica desativado durante mensagens de andamento. Ao recarregar dentro do prazo de validade da sessão, o painel recupera a cor e o texto salvo. Nomes e detalhes recebidos em alertas do ELO são omitidos do texto salvo.
+
 - **Eleição e turnos:** clique no cabeçalho dessa seção para expandir ou recolher as opções. A seção começa fechada, com o resumo do ano e dos turnos marcados sempre visível. O estado aberto/fechado fica salvo na sessão. É necessário manter pelo menos um turno selecionado. Os seletores ficam bloqueados enquanto a consulta estiver em andamento.
 - **Título formatado:** apresenta espaços a cada quatro dígitos, inclusive nos avisos, como `0656 9130 0701`.
 - **Validação durante a digitação:** verifica o formato, o código de UF e os dígitos verificadores. O botão Consultar ASE permanece desativado enquanto a entrada estiver incompleta ou inválida. Essa validação não confirma a existência do cadastro no ELO.
 - **Limpar título:** use o botão **×** à direita do campo ou pressione **Esc** com o foco no campo.
-- **Mover painel:** arraste pelo cabeçalho. A posição é salva na sessão da aba e reaplicada ao recriar o painel.
+- **Mover painel:** arraste pelo cabeçalho. O script lembra a posição em novas abas e ajusta o painel à área visível ao restaurar ou redimensionar a janela.
 - **Minimizar:** use o botão no cabeçalho. O painel inteiro é ocultado e fica somente uma seta pequena e discreta no canto superior direito, com destaque ao receber o mouse ou o foco do teclado.
 - **Restaurar:** clique na seta para recuperar o tamanho normal, a posição anterior e o título que estava digitando. Enquanto minimizado, o painel não é reaberto automaticamente pelos resultados da consulta, e a seta acompanha a troca dos quadros internos do ELO.
 - **Parar:** interrompe a consulta em andamento.
@@ -173,7 +175,8 @@ O script permanece em um arquivo único, com funções próprias nomeadas em por
 | Estilos do painel | `ESTILOS_PAINEL` e `aplicarEstilosPainel` |
 | Criação e montagem do painel | `criarPainel` e `montarPainel` |
 | Eventos e atalho Esc | `registrarEventosPainel` e `tratarEscapeNoTitulo` |
-| Posição e arraste | `restaurarPosicaoPainel` e `habilitarArrastePainel` |
+| Posição, arraste e tamanho da janela | `posicionarPainel` e `habilitarArrastePainel` |
+| Cores do acompanhamento e cópia | `aplicarTomStatus` e `copiarStatus` |
 | Minimização e restauração pela seta | `definirPainelRecolhido`, `exibirBotaoRestaurarPainel`, `removerBotaoRestaurarPainel` e `ESTILO_BOTAO_RESTAURAR_PAINEL` |
 | Popovers, botão de fechar e temporizador | `exibirPopover` e `fecharPopover` |
 | Sequência da automação | `escolherProximaAcao` e `executarCiclo` |
@@ -191,6 +194,7 @@ Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos ar
 - Consulta e confere registros. Não lança ASE nem altera o cadastro eleitoral.
 - Não utiliza bibliotecas externas nem envia os dados consultados para outros serviços.
 - Usa `sessionStorage` para manter eleição selecionada, preferências de turnos por eleição, título, etapa, resultado, endereço de retorno e posição do painel entre navegações. O nome exibido nos relatórios é omitido da mensagem salva na sessão.
+- Usa `localStorage` somente para lembrar a posição do painel em novas abas.
 - Confere as linhas disponíveis na tabela carregada; não percorre automaticamente eventual paginação do histórico.
 
 ## Licença
