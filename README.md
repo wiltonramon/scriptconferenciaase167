@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.38.**
+**Versão atual: 1.5.39.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -87,9 +87,9 @@ Somente as datas dos turnos marcados no painel participam da conferência. Regis
 
 A busca usa a coluna **Ocorrência**, e exige que código e data estejam na mesma linha da tabela. A data de processamento não é usada.
 
-- **ASE 094:** são considerados os registros com situação **ATIVO**, **INATIVO** ou **FACULTADO**.
+- **ASE 094:** o relatório identifica os registros **ATIVO**, **INATIVO** e **FACULTADO**, mas somente **ATIVO** e **FACULTADO** podem gerar orientação de lançamento do ASE 167. Um registro **INATIVO** é identificado como tal e não gera essa orientação.
 - **ASE 167:** é conferida a existência do código na data correspondente, sem filtro de situação.
-- **Pendência por turno:** existe quando há ASE 094 em uma das situações aceitas e não há ASE 167 na mesma data. O aviso orienta: `Registre o ASE 167 no 1º Turno, se for o caso.` ou o equivalente para o 2º Turno.
+- **Orientação por turno:** aparece somente quando há ASE 094 **ATIVO** ou **FACULTADO** e não há ASE 167 na mesma data. O aviso orienta: `Registre o ASE 167 no 1º Turno, se for o caso.` ou o equivalente para o 2º Turno. A ausência isolada de ASE 167 não basta para gerar a orientação.
 - **Sem ASE 094 em um turno:** o script informa a ausência desse registro e não recomenda lançar ASE 167 para esse turno.
 - **ASE 167 em todos os turnos selecionados:** o resultado informa que não há registros a serem feitos, independentemente da existência de ASE 094.
 
@@ -102,7 +102,7 @@ O script usa a configuração escolhida no código; não identifica automaticame
 | Cor | Significado |
 | --- | --- |
 | Verde | ASE 167 encontrado em todos os turnos selecionados, ou conferência concluída sem pendências segundo as regras de ASE 094 e 167. Inclui o caso confirmado de eleitor sem histórico ASE. |
-| Laranja | Há ASE 094 e falta ASE 167 em pelo menos um turno correspondente. O texto identifica os turnos e apresenta orientação condicional de lançamento. |
+| Laranja | Há ASE 094 ATIVO ou FACULTADO e falta ASE 167 em pelo menos um turno correspondente. O texto identifica os turnos e apresenta orientação condicional de lançamento. ASE 094 INATIVO não gera essa orientação. |
 | Amarela | Não foi possível concluir a conferência da tabela ou da situação dos registros. É necessária conferência manual. |
 | Vermelha | Aviso de falha, como recusa do título pelo ELO, consulta sem resultado ou prazo de etapa excedido. |
 
@@ -175,7 +175,7 @@ O script permanece em um arquivo único, com funções próprias nomeadas em por
 
 Os nomes das APIs externas, seletores do ELO e propriedades salvas na sessão são preservados por compatibilidade. Alterações em `KEY` ou no formato persistido exigem cuidado para não perder a continuidade de consultas iniciadas.
 
-Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.38 elimina a repetição do ano e dos turnos no cabeçalho, mantendo essa informação somente no resumo de **Eleição e turnos**, inclusive quando o menu está recolhido. O valor inicial continua sendo `ELEICAO = 2026`.
+Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.39 restringe a orientação condicional de ASE 167 aos registros ASE 094 ATIVO ou FACULTADO da mesma data, excluindo INATIVO dessa regra. As situações que podem gerar orientação ficam em `CONFIG.absenceGuidanceStatuses`. O valor inicial continua sendo `ELEICAO = 2026`.
 
 ## Escopo e dados temporários
 
