@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.37.**
+**Versão atual: 1.5.38.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -35,7 +35,7 @@ Se houver outros filtros preenchidos no formulário original do ELO, o script pe
 
 ## Painel e controles
 
-O painel tem visual compacto, com a eleição ativa e a quantidade de turnos no cabeçalho. A consulta fica em destaque, os botões **Voltar** e **Parar** aparecem lado a lado e a área **Acompanhamento** mantém as mensagens completas, com rolagem quando necessário. Durante a execução, o botão principal mostra **Consultando…** e o indicador mostra **Em consulta**.
+O painel tem visual compacto, com o ano e os turnos selecionados apresentados uma única vez, no resumo de **Eleição e turnos**. A consulta fica em destaque, os botões **Voltar** e **Parar** aparecem lado a lado e a área **Acompanhamento** mantém as mensagens completas, com rolagem quando necessário. Durante a execução, o botão principal mostra **Consultando…** e o indicador mostra **Em consulta**.
 
 - **Eleição e turnos:** clique no cabeçalho dessa seção para expandir ou recolher as opções. A seção começa fechada, com o resumo do ano e dos turnos marcados sempre visível. O estado aberto/fechado fica salvo na sessão. É necessário manter pelo menos um turno selecionado. Os seletores ficam bloqueados enquanto a consulta estiver em andamento.
 - **Título formatado:** apresenta espaços a cada quatro dígitos, inclusive nos avisos, como `0656 9130 0701`.
@@ -175,7 +175,7 @@ O script permanece em um arquivo único, com funções próprias nomeadas em por
 
 Os nomes das APIs externas, seletores do ELO e propriedades salvas na sessão são preservados por compatibilidade. Alterações em `KEY` ou no formato persistido exigem cuidado para não perder a continuidade de consultas iniciadas.
 
-Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.37 permite recolher o menu de eleição e turnos, mantendo o resumo da seleção visível e salvando o estado de expansão na sessão. O valor inicial continua sendo `ELEICAO = 2026`.
+Ao publicar uma atualização, mantenha o mesmo código e a mesma versão nos arquivos `.js` e `.txt`. A versão 1.5.38 elimina a repetição do ano e dos turnos no cabeçalho, mantendo essa informação somente no resumo de **Eleição e turnos**, inclusive quando o menu está recolhido. O valor inicial continua sendo `ELEICAO = 2026`.
 
 ## Escopo e dados temporários
 
