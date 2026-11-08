@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.47
+// @version      1.5.48
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -28,7 +28,7 @@
    * - escolherProximaAcao/executarCiclo: sequência de navegação no ELO.
    *
    * Preserve KEY e o formato salvo na sessão para manter a continuidade das consultas.
-   * As etapas (query/results/detail/history/done), seletores e APIs externas mantêm
+   * As etapas (query/detail/history/done), seletores e APIs externas mantêm
    * os nomes originais por compatibilidade. As funções próprias usam português.
    * O nome do eleitor aparece na tela, mas não deve ser salvo na sessão.
    * Mantenha o arquivo único: ele é instalado diretamente como userscript.
@@ -85,8 +85,7 @@
     noResultPattern: /^(?:nenhum (?:registro|eleitor|resultado)(?: foi)? (?:encontrado|localizado)|n[ãa]o (?:foi encontrado|foi localizado) nenhum (?:registro|eleitor|resultado))[.!]?$/i
   });
   const TIMEOUT_MESSAGES = Object.freeze({
-    query: 'O formulário de consulta do ELO não ficou disponível. Volte à consulta inicial e tente novamente.',
-    results: 'O ELO não abriu o resultado da consulta a tempo. Confira o título e tente novamente.',
+    query: 'O ELO não terminou de carregar a tempo para abrir o cadastro. Tente novamente.',
     detail: 'Os dados do eleitor não carregaram, ou o link do ASE não foi reconhecido. Confira a tela do ELO.',
     history: 'O histórico ASE não carregou a tempo. Confira a tela do ELO.'
   });
@@ -171,7 +170,7 @@
 
   /** Aceita somente etapas conhecidas e sessões ainda válidas dentro de LIMIT. */
   function estadoValido(value) {
-    return Boolean(value && ['query', 'results', 'detail', 'history', 'done'].includes(value.phase)
+    return Boolean(value && ['query', 'detail', 'history', 'done'].includes(value.phase)
       && /^\d{12}$/.test(value.title) && Number.isFinite(value.updated)
       && Date.now() - value.updated >= 0 && Date.now() - value.updated < LIMIT);
   }
@@ -218,7 +217,7 @@
 
   /** Persiste a seleção junto da consulta, sem gravar o nome do eleitor. */
   function salvarSessao() {
-    // Salva a próxima etapa ANTES de um clique que possa trocar de página.
+    // Salva a próxima etapa antes de navegar para retomar a consulta na nova página.
     window.sessionStorage.setItem(KEY, JSON.stringify({state, home, position:savedPosition,
       failure:state ? null : falhaSalva,
       election:eleicaoSelecionada, selectedTurns:indicesTurnosSelecionados,
@@ -270,6 +269,7 @@
         return;
       }
       if (estadoValido(saved.state)) state = saved.state;
+      else if (saved.state?.phase === 'results') statusText = 'A consulta anterior usava o formulário antigo. Consulte novamente.';
       else if (saved.state) statusText = 'Consulta anterior expirada. Inicie uma nova consulta.';
       else if (typeof saved.failure?.message === 'string' && Number.isFinite(saved.failure.updated)) {
         const idade = Date.now() - saved.failure.updated;
@@ -298,9 +298,9 @@
   }
 
   /** Extrai a inscrição dos argumentos do onclick do ELO, sem executar esse código. */
-  function extrairTituloDoClique(link, argumentIndex) {
+  function extrairTituloDoLinkAse(link) {
     const args = (link.getAttribute('onclick') || '').match(/\(\s*['"](\d+)['"](?:\s*,\s*['"]([^'"]*)['"])?/);
-    return normalizarTitulo(args?.[argumentIndex + 1]);
+    return normalizarTitulo(args?.[2]);
   }
 
   /** Valida o endereço do histórico oferecido pelo ELO para a inscrição consultada. */
@@ -407,15 +407,12 @@
         if (!doc.documentElement) return;
       } catch { return; } // O acesso a quadros de outra origem pode ser recusado.
       const links = Array.from(doc.querySelectorAll('a[onclick]'));
-      const firstResult = links.find(a => /^\s*consEleitor\s*\(/.test(a.getAttribute('onclick') || '') && elementoVisivel(a));
       const aseLinks = links.filter(a => /^\s*ConsultaHistoricoFase\s*\(/.test(a.getAttribute('onclick') || ''));
       // Verifica a existência de ASE antes de filtrar links disponíveis para clique.
-      const ase = aseLinks.find(a => (!state || extrairTituloDoClique(a, 1) === state.title) && elementoVisivel(a));
+      const ase = aseLinks.find(a => (!state || extrairTituloDoLinkAse(a) === state.title) && elementoVisivel(a));
       const historyTitle = obterTituloHistoricoCarregado(doc);
       views.push({win, doc, input:doc.querySelector('#num_inscricao_cpf'),
-        consult:doc.querySelector('input[name="btn_consultar"]'),
-        result:firstResult ? {node:firstResult, title:extrairTituloDoClique(firstResult, 0)} : null,
-        ase:ase ? {node:ase, title:extrairTituloDoClique(ase, 1)} : null,
+        ase:ase ? {node:ase, title:extrairTituloDoLinkAse(ase)} : null,
         noAseTitle:state?.phase === 'detail' ? obterTituloSemHistoricoAse(doc, aseLinks) : null,
         historyTitle});
       for (const frame of doc.querySelectorAll('frame,iframe')) {
@@ -1048,7 +1045,7 @@
   /** Escolhe um quadro com body, dando preferência ao quadro principal do ELO. */
   function selecionarQuadroPainel(quadros) {
     return quadros.find(quadro => quadro.win.name === 'principal' && quadro.doc.body?.tagName === 'BODY')
-      || quadros.find(quadro => quadro.doc.body?.tagName === 'BODY' && (quadro.input || quadro.result || quadro.ase))
+      || quadros.find(quadro => quadro.doc.body?.tagName === 'BODY' && (quadro.input || quadro.ase || quadro.historyTitle))
       || quadros.find(quadro => quadro.doc.body?.tagName === 'BODY');
   }
 
@@ -1257,11 +1254,6 @@
     return Boolean(state && state.phase !== 'done');
   }
 
-  /** Exige documento carregado e controles disponíveis antes de preencher a consulta. */
-  function formularioPronto(view) {
-    return Boolean(view?.doc?.readyState === 'complete' && elementoVisivel(view.input) && elementoVisivel(view.consult));
-  }
-
   /** Aguarda o carregamento e as requisições jQuery para evitar interromper o menu do ELO no Firefox. */
   function navegacaoPronta(views) {
     return views.every(view => {
@@ -1272,54 +1264,30 @@
     });
   }
 
-  /** Decide a próxima ação a partir da etapa e dos quadros atuais, sem clicar ou alterar o estado. */
-  function escolherProximaAcao(current, views) {
-    if (!current || current.phase === 'done') return null;
-    if (current.phase === 'query' && current.direct) return {kind:'direct'};
-    if (current.phase === 'query') {
-      const view = views.find(formularioPronto);
-      return view ? {kind:'query', view} : null;
-    }
-    if (current.phase === 'history') {
-      return views.some(v => v.historyTitle === current.title) ? {kind:'complete'} : null;
-    }
-    if (current.direct && current.phase === 'detail') {
-      // A navegação pode ainda estar pendente. Não usa links do cadastro anterior.
-      views = views.filter(view => {
-        try {
-          const url = new URL(view.doc.location?.href || view.win?.location?.href);
-          return url.origin === location.origin && url.pathname === '/sae/jsp/ResConsultaEleitor.jsp'
-            && url.searchParams.get('num_inscricao') === current.title;
-        } catch { return false; }
-      });
-    }
-    const detail = views.find(v => v.ase?.title === current.title);
-    if (detail) return {kind:'ase', node:detail.ase.node};
-    if (current.phase === 'detail' && views.some(v => v.noAseTitle === current.title)) {
-      return {kind:'noase'};
-    }
-    if (current.phase === 'results') {
-      const result = views.find(v => v.result);
-      if (result) return result.result.title === current.title
-        ? {kind:'result', node:result.result.node} : {kind:'mismatch'};
-    }
-    return null;
+  /** Reconhece a página de cadastro correspondente à consulta em andamento. */
+  function cadastroDoTitulo(view, title) {
+    try {
+      const url = new URL(view.doc.location?.href || view.win?.location?.href);
+      return url.origin === location.origin && url.pathname === '/sae/jsp/ResConsultaEleitor.jsp'
+        && url.searchParams.get('num_inscricao') === title;
+    } catch { return false; }
   }
 
-  /** Captura alertas somente durante a ação fornecida e restaura os alertas originais mesmo se ela falhar. */
-  function executarCapturandoAlertas(wins, messages, action) {
-    const saved = [];
-    for (const win of new Set(wins)) {
-      try {
-        const original = win.alert;
-        win.alert = text => { messages.push(String(text ?? '').replace(/\s+/g, ' ').trim()); };
-        saved.push([win, original]);
-      } catch { /* quadro inacessível */ }
+  /** Decide a próxima ação a partir da etapa e dos quadros atuais. */
+  function escolherProximaAcao(current, views) {
+    if (!current) return null;
+    if (current.phase === 'query') return {kind:'direct'};
+    if (current.phase === 'history') {
+      return views.some(view => view.historyTitle === current.title) ? {kind:'complete'} : null;
     }
-    try { return action(); }
-    finally {
-      for (const [win, original] of saved) { try { win.alert = original; } catch { /* ignora */ } }
-    }
+    if (current.phase !== 'detail') return null;
+
+    // A navegação pode ainda estar pendente. Não usa links do cadastro anterior.
+    const cadastros = views.filter(view => cadastroDoTitulo(view, current.title));
+    const detail = cadastros.find(view => view.ase?.title === current.title);
+    if (detail) return {kind:'ase', node:detail.ase.node};
+    const semHistorico = cadastros.find(view => view.noAseTitle === current.title);
+    return semHistorico ? {kind:'noase', view:semHistorico} : null;
   }
 
   /** Abre o cadastro diretamente pelo título e continua a conferência após a navegação. */
@@ -1329,7 +1297,7 @@
     const title = normalizarTitulo(panel.querySelector('[data-title]').value);
     if (!tituloValido(title)) { atualizarBotoes(); focarCampoTitulo(); return; }
     home = validarEnderecoInicial(home) || new URL('/sae/jsp/ConsultaAtendimento.jsp', location.origin).href;
-    state = {phase:'query', title, direct:true, updated:Date.now()};
+    state = {phase:'query', title, updated:Date.now()};
     noResultSince = 0;
     fecharPopover();
     try {
@@ -1342,9 +1310,9 @@
   }
 
   /** Aguarda o carregamento interno do ELO antes de navegar, inclusive no Firefox. */
-  function enviarConsultaDireta() {
+  function enviarConsultaDireta(views = coletarQuadros()) {
     if (!tituloValido(state?.title)) { informarFalha('Título inválido. Corrija os números para consultar.'); return; }
-    if (!navegacaoPronta(coletarQuadros())) {
+    if (!navegacaoPronta(views)) {
       atualizarMensagemPainel('Aguardando o ELO concluir o carregamento interno para abrir o cadastro…');
       agendarVerificacao(100);
       return;
@@ -1355,88 +1323,6 @@
     state.updated = Date.now();
     salvarSessao();
     window.location.assign(destino.href);
-  }
-
-  /** Compatibilidade com consultas iniciadas por versões antigas, ainda salvas na sessão. */
-  function enviarConsulta(view, title) {
-    if (!tituloValido(title)) {
-      informarFalha('Título inválido. Corrija os números para consultar.');
-      return;
-    }
-    const views = coletarQuadros();
-    if (!formularioPronto(view) || !navegacaoPronta(views)) {
-      // O body.onload do ELO inicializa e limpa o formulário. Aguarda antes de preencher.
-      const changed = state?.phase !== 'query' || state.title !== title;
-      if (changed) {
-        state = {phase:'query', title, updated:Date.now()};
-      }
-      try {
-        // O estado já salvo não muda durante as retentativas de carregamento.
-        if (changed) salvarSessao();
-        atualizarMensagemPainel('Aguardando o ELO concluir o carregamento interno para consultar…');
-        atualizarBotoes();
-        atualizarMonitoramento();
-        agendarVerificacao(100);
-      } catch (error) { interromperConsulta('Não foi possível preparar a consulta. ' + error.message); }
-      return;
-    }
-    const otherText = Array.from(view.input.form?.querySelectorAll('input[type="text"]') || [])
-      .some(input => input !== view.input && input.value.trim());
-    if (otherText) {
-      interromperConsulta('Limpe os outros filtros da página antes de consultar apenas pelo título.');
-      return;
-    }
-    home = validarEnderecoInicial(location.href);
-    state = {phase:'results', title, updated:Date.now()};
-    noResultSince = 0;
-    try {
-      salvarSessao();
-      view.input.focus();
-      const setter = Object.getOwnPropertyDescriptor(view.win.HTMLInputElement.prototype, 'value')?.set;
-      if (setter) setter.call(view.input, title);
-      else view.input.value = title;
-      // O ELO avisa título inválido com alert(). Captura a mensagem para tratá-la aqui.
-      const alerts = [];
-      const wins = views.map(item => item.win);
-      executarCapturandoAlertas(wins, alerts, () => {
-        view.input.dispatchEvent(new view.win.Event('input', {bubbles:true}));
-        // Não simula teclas: rotinas legadas podem exigir dados que Event não possui.
-        view.input.dispatchEvent(new view.win.Event('change', {bubbles:true}));
-        view.input.blur(); // Executa o onblur nativo do ELO antes da consulta.
-      });
-      if (alerts.length) { tratarConsultaRecusada(title, alerts); return; }
-      // A validação nativa pode cancelar ou corrigir a inscrição.
-      if (view.input.value.replace(/\D/g, '') !== title) {
-        throw new Error('O ELO alterou ou limpou o título digitado. Confira os números e tente novamente.');
-      }
-      const inscription = view.input.form?.querySelector('input[name="num_inscricao"]');
-      const cpf = view.input.form?.querySelector('input[name="num_cpf"]');
-      if (!inscription || !cpf) {
-        throw new Error('O formulário do ELO não disponibilizou os campos de Inscrição/CPF. Reabra a consulta.');
-      }
-      // Estes são os parâmetros do formulário que selecionam a pesquisa por título.
-      // Não depende de o onblur sintético atualizar os campos internos do ELO.
-      inscription.value = title;
-      cpf.value = '';
-      atualizarMensagemPainel('Consultando inscrição. Aguardando o resultado…');
-      atualizarBotoes();
-      if (!elementoVisivel(view.consult) || !elementoVisivel(view.input)) throw new Error('O formulário mudou. Tente novamente.');
-      fecharPopover();
-      atualizarMonitoramento();
-      executarCapturandoAlertas(wins, alerts, () => view.consult.click());
-      if (alerts.length) { tratarConsultaRecusada(title, alerts); return; }
-      agendarVerificacao();
-    } catch (error) { interromperConsulta('Consulta interrompida. ' + error.message); }
-  }
-
-  /** Apresenta o motivo da recusa e seleciona o título para facilitar sua correção. */
-  function tratarConsultaRecusada(title, alerts) {
-    const reason = alerts.filter(Boolean).join(' ') || 'motivo não informado.';
-    const message = `O ELO recusou o título ${formatarTitulo(title)}: ${reason}`;
-    interromperConsulta(message, 'error', `O ELO recusou o título ${formatarTitulo(title)}. Corrija o título e consulte novamente.`);
-    definirPainelRecolhido(false);
-    exibirPopover(message + '\nCorrija o título e consulte novamente.', panel?.ownerDocument, 'error');
-    focarCampoTitulo(true);
   }
 
   /** Interrompe a execução e navega para a tela inicial previamente validada. */
@@ -1556,19 +1442,18 @@
     });
   }
 
-  /** Trata a espera e exige persistência da mensagem sem resultado antes de concluir uma falha. */
+  /** Confirma a mensagem de consulta sem resultado somente no cadastro solicitado. */
   function verificarEspera(views) {
-    if (verificarPrazoEtapa()) return;
-    if (state.phase === 'results' || (state.direct && state.phase === 'detail')) {
-      if (views.some(view => possuiMensagemSemResultado(view.doc))) {
-        // Exige que o aviso persista, para não confundir com a tela ainda carregando.
-        noResultSince = noResultSince || Date.now();
-        if (Date.now() - noResultSince >= CONFIG.noResultDelayMs) {
-          informarFalha(`O ELO não retornou nenhum eleitor para o título ${formatarTitulo(state.title)}. Confira o número digitado.`);
-        }
-        return;
-      }
+    if (state.phase !== 'detail') return;
+    const semResultado = views.some(view => cadastroDoTitulo(view, state.title) && possuiMensagemSemResultado(view.doc));
+    if (!semResultado) {
       noResultSince = 0;
+      return;
+    }
+    // Exige que o aviso persista, para não confundir com a tela ainda carregando.
+    noResultSince = noResultSince || Date.now();
+    if (Date.now() - noResultSince >= CONFIG.noResultDelayMs) {
+      informarFalha(`O ELO não retornou nenhum eleitor para o título ${formatarTitulo(state.title)}. Confira o número digitado.`);
     }
   }
 
@@ -1611,15 +1496,7 @@
       if (verificarPrazoEtapa()) return;
       const action = escolherProximaAcao(state, views);
       if (!action) { verificarEspera(views); return; }
-      if (action.kind === 'direct') { enviarConsultaDireta(); return; }
-      if (action.kind === 'query') {
-        enviarConsulta(action.view, state.title);
-        return;
-      }
-      if (action.kind === 'mismatch') {
-        interromperConsulta('O primeiro resultado tem inscrição diferente. Automação interrompida para conferência.');
-        return;
-      }
+      if (action.kind === 'direct') { enviarConsultaDireta(views); return; }
       if (action.kind === 'complete') {
         const outcome = conferirHistorico(views);
         if (outcome === 'waiting') { agendarVerificacao(300); return; }
@@ -1628,8 +1505,7 @@
       }
       if (action.kind === 'noase') {
         const empty = CONFIG.turns.map(() => false);
-        const detail = views.find(view => view.noAseTitle === state.title);
-        const name = detail ? obterNomeEleitor(detail.doc, state.title) : '';
+        const name = obterNomeEleitor(action.view.doc, state.title);
         const input = panel?.querySelector('[data-title]');
         const clearInput = !input || !input.value.trim() || normalizarTitulo(input.value) === state.title;
         if (clearInput) state.clearTitle = true;
@@ -1638,31 +1514,23 @@
         if (clearInput) limparCampoTitulo();
         return;
       }
-      // Busca um elemento atual e valida de novo antes de acionar o evento nativo.
-      const freshViews = coletarQuadros();
-      if (!navegacaoPronta(freshViews)) {
+      if (!navegacaoPronta(views)) {
         atualizarMensagemPainel('Aguardando o ELO concluir o carregamento interno antes de avançar…');
         agendarVerificacao(100);
         return;
       }
-      const fresh = escolherProximaAcao(state, freshViews);
-      if (!fresh || fresh.kind !== action.kind || !elementoVisivel(fresh.node)) return;
-      // Na consulta direta não existe o quadro "principal" esperado pelo onclick nativo.
-      const historicoDireto = state.direct && fresh.kind === 'ase';
-      const enderecoHistorico = historicoDireto ? obterEnderecoHistorico(fresh.node, state.title) : null;
-      if (historicoDireto && !enderecoHistorico) {
+      if (!elementoVisivel(action.node)) return;
+      const enderecoHistorico = obterEnderecoHistorico(action.node, state.title);
+      if (!enderecoHistorico) {
         informarFalha('O link do histórico ASE não corresponde ao título consultado ou está incompleto. Confira o cadastro.');
         return;
       }
-      state.phase = action.kind === 'result' ? 'detail' : 'history';
+      state.phase = 'history';
       state.updated = Date.now();
       salvarSessao();
-      atualizarMensagemPainel(action.kind === 'result' ? 'Abrindo o primeiro resultado. Aguardando o link ASE…'
-        : 'Abertura do histórico ASE solicitada. Use o botão acima para voltar.');
+      atualizarMensagemPainel('Abertura do histórico ASE solicitada. Use o botão acima para voltar.');
       atualizarBotoes();
-      if (historicoDireto) window.location.assign(enderecoHistorico);
-      else fresh.node.click();
-      agendarVerificacao();
+      window.location.assign(enderecoHistorico);
     } catch (error) {
       console.warn('[ELO ASE] Erro inesperado.', error);
       const detail = (typeof error === 'string' ? error

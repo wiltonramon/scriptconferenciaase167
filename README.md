@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.47.**
+**Versão atual: 1.5.48.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -37,7 +37,7 @@ A consulta direta usa os 12 dígitos do título validado. O histórico só é ab
 
 O painel tem visual compacto, com o ano e os turnos selecionados apresentados uma única vez, no resumo de **Eleição e turnos**. A consulta fica em destaque, os botões **Voltar** e **Parar** aparecem lado a lado e a área **Acompanhamento** mantém as mensagens completas, com rolagem quando necessário. Durante a execução, o botão principal mostra **Consultando…** e o indicador mostra **Em consulta**.
 
-O bloco **Acompanhamento** mantém a cor do resultado depois que o popover fecha. O botão **Copiar** copia a mensagem exibida e fica desativado durante mensagens de andamento. Ao recarregar dentro do prazo de validade da sessão, o painel recupera a cor e o texto salvo. Nomes e detalhes recebidos em alertas do ELO são omitidos do texto salvo.
+O bloco **Acompanhamento** mantém a cor do resultado depois que o popover fecha. O botão **Copiar** copia a mensagem exibida e fica desativado durante mensagens de andamento. Ao recarregar dentro do prazo de validade da sessão, o painel recupera a cor e o texto salvo. Nomes e detalhes de erros inesperados são omitidos do texto salvo.
 
 - **Eleição e turnos:** clique no cabeçalho dessa seção para expandir ou recolher as opções. A seção começa fechada, com o resumo do ano e dos turnos marcados sempre visível. O estado aberto/fechado fica salvo na sessão. É necessário manter pelo menos um turno selecionado. Os seletores ficam bloqueados enquanto a consulta estiver em andamento.
 - **Título formatado:** apresenta espaços a cada quatro dígitos, inclusive nos avisos, como `0656 9130 0701`.
@@ -109,7 +109,7 @@ O script usa a configuração escolhida no código; não identifica automaticame
 | Verde | ASE 167 encontrado em todos os turnos selecionados, ou conferência concluída sem pendências segundo as regras de ASE 094 e 167. Inclui o caso confirmado de eleitor sem histórico ASE. |
 | Laranja | Há ASE 094 ATIVO ou FACULTADO e falta ASE 167 em pelo menos um turno correspondente. O texto identifica os turnos e apresenta orientação condicional de lançamento. ASE 094 INATIVO não gera essa orientação. |
 | Amarela | Não foi possível concluir a conferência da tabela ou da situação dos registros. É necessária conferência manual. |
-| Vermelha | Aviso de falha, como recusa do título pelo ELO, consulta sem resultado ou prazo de etapa excedido. |
+| Vermelha | Aviso de falha, como consulta sem resultado, link ASE inválido ou prazo de etapa excedido. |
 
 Quando o ASE 167 é identificado em todos os turnos selecionados, o aviso é verde mesmo que a conferência do ASE 094 não esteja disponível. Nome e título identificam o resultado; se o nome não for obtido, aparece `ELEITOR(A): nome não identificado`.
 
@@ -151,8 +151,7 @@ Esse trecho integra um aviso laranja com identificação do eleitor e as informa
 
 - Aguarda o carregamento dos documentos e as requisições jQuery do ELO antes de avançar, evitando interromper o carregamento interno do menu no Firefox.
 - Aguarda até **4 segundos** pela identificação da tabela do histórico quando necessário.
-- Aplica prazo de **45 segundos por etapa**, com mensagem correspondente ao formulário, resultado, dados do eleitor ou histórico.
-- Captura os alertas de validação durante o preenchimento e o clique em Consultar, apresentando o motivo da recusa no painel e no popover.
+- Aplica prazo de **45 segundos por etapa**, com mensagem correspondente à abertura do cadastro, aos dados do eleitor ou ao histórico.
 - Em erro inesperado, mostra o motivo no painel e registra o diagnóstico completo no console do navegador, acessível por **F12**.
 
 A detecção de consulta sem resultado usa um padrão conservador de mensagens em `CONFIG.noResultPattern`. Se o ELO mudar o texto ou a estrutura das telas, essa identificação pode precisar de ajuste.
@@ -203,8 +202,10 @@ Distribuído sob a [licença MIT](LICENSE).
 
 A versão 1.5.44 limita o retorno visual de cópia a um temporizador, cancela essa tarefa ao trocar o painel ou suspender a página e compartilha a seleção de linhas entre as conferências do histórico.
 
-A versão 1.5.45 abre o cadastro diretamente pelo parâmetro num_inscricao e segue para o histórico ASE. O fluxo anterior fica disponível para concluir sessões iniciadas por versões antigas.
+A versão 1.5.45 abre o cadastro diretamente pelo parâmetro num_inscricao e segue para o histórico ASE. 
 
 A versão 1.5.46 abre o endereço do link ASE na mesma aba após validar a origem e a inscrição, permitindo avançar a partir do cadastro direto, que não possui o quadro principal.
 
 A versão 1.5.47 também reconhece links ASE com href="#", montando o endereço com os parâmetros literais de ConsultaHistoricoFase, sem executar o onclick. Confere a inscrição e rejeita código adicional.
+
+A versão 1.5.48 remove o fluxo do formulário antigo e usa somente a consulta direta. Consultas interrompidas na etapa de resultados do formulário antigo precisam ser iniciadas novamente.
