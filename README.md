@@ -2,7 +2,7 @@
 
 Script de usuário para consultar o histórico ASE pelo título de eleitor e conferir os registros **094 (Ausência às urnas)** e **167 (Justificativa de ausência às urnas)** nas datas da eleição selecionada. Por padrão, confere os dois turnos de 2026.
 
-**Versão atual: 1.5.48.**
+**Versão atual: 1.5.49.**
 
 O script adiciona um painel flutuante ao ELO, automatiza a abertura do histórico e apresenta a conferência por turno. As orientações de lançamento são condicionais: o usuário avalia cada caso e realiza o lançamento manualmente, quando necessário.
 
@@ -27,7 +27,7 @@ Para atualizar manualmente, substitua todo o código do script instalado pela ve
 1. Acesse o ELO com sua sessão autenticada.
 2. No painel **Consulta ASE**, digite ou cole o título de eleitor.
 3. Clique em **Consultar ASE** ou pressione **Enter** quando o título estiver válido.
-4. O script abre diretamente o cadastro pelo endereço `ResConsultaEleitor.jsp?num_inscricao=TITULO` e aciona o histórico ASE da inscrição consultada.
+4. O script abre o ELO com `ELO.jsp?url=...`, que carrega `ResConsultaEleitor.jsp?num_inscricao=TITULO` no quadro principal. O histórico ASE abre nesse mesmo quadro, mantendo os menus disponíveis.
 5. Leia o aviso e confira a orientação de cada turno. A mensagem também permanece no painel.
 6. Para outra consulta, informe o novo título no mesmo painel. O script abre diretamente o cadastro do novo título.
 

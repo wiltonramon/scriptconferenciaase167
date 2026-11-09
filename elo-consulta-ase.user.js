@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.48
+// @version      1.5.49
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -1264,6 +1264,13 @@
     });
   }
 
+  /** Abre uma página no quadro principal do ELO, preservando os menus. */
+  function montarEnderecoElo(pagina) {
+    const url = new URL('/sae/jsp/ELO.jsp', location.origin);
+    url.searchParams.set('url', pagina);
+    return url.href;
+  }
+
   /** Reconhece a página de cadastro correspondente à consulta em andamento. */
   function cadastroDoTitulo(view, title) {
     try {
@@ -1285,7 +1292,7 @@
     // A navegação pode ainda estar pendente. Não usa links do cadastro anterior.
     const cadastros = views.filter(view => cadastroDoTitulo(view, current.title));
     const detail = cadastros.find(view => view.ase?.title === current.title);
-    if (detail) return {kind:'ase', node:detail.ase.node};
+    if (detail) return {kind:'ase', view:detail};
     const semHistorico = cadastros.find(view => view.noAseTitle === current.title);
     return semHistorico ? {kind:'noase', view:semHistorico} : null;
   }
@@ -1296,7 +1303,7 @@
     if (consultaEmAndamento()) return;
     const title = normalizarTitulo(panel.querySelector('[data-title]').value);
     if (!tituloValido(title)) { atualizarBotoes(); focarCampoTitulo(); return; }
-    home = validarEnderecoInicial(home) || new URL('/sae/jsp/ConsultaAtendimento.jsp', location.origin).href;
+    home = validarEnderecoInicial(home) || montarEnderecoElo('/sae/jsp/ConsultaAtendimento.jsp');
     state = {phase:'query', title, updated:Date.now()};
     noResultSince = 0;
     fecharPopover();
@@ -1317,12 +1324,12 @@
       agendarVerificacao(100);
       return;
     }
-    const destino = new URL('/sae/jsp/ResConsultaEleitor.jsp', location.origin);
-    destino.searchParams.set('num_inscricao', state.title);
+    const consulta = new URL('/sae/jsp/ResConsultaEleitor.jsp', location.origin);
+    consulta.searchParams.set('num_inscricao', state.title);
     state.phase = 'detail';
     state.updated = Date.now();
     salvarSessao();
-    window.location.assign(destino.href);
+    window.location.assign(montarEnderecoElo(consulta.pathname + consulta.search));
   }
 
   /** Interrompe a execução e navega para a tela inicial previamente validada. */
@@ -1519,8 +1526,9 @@
         agendarVerificacao(100);
         return;
       }
-      if (!elementoVisivel(action.node)) return;
-      const enderecoHistorico = obterEnderecoHistorico(action.node, state.title);
+      const linkAse = action.view.ase.node;
+      if (!elementoVisivel(linkAse)) return;
+      const enderecoHistorico = obterEnderecoHistorico(linkAse, state.title);
       if (!enderecoHistorico) {
         informarFalha('O link do histórico ASE não corresponde ao título consultado ou está incompleto. Confira o cadastro.');
         return;
@@ -1530,7 +1538,8 @@
       salvarSessao();
       atualizarMensagemPainel('Abertura do histórico ASE solicitada. Use o botão acima para voltar.');
       atualizarBotoes();
-      window.location.assign(enderecoHistorico);
+      // Navega só no quadro do cadastro para manter os menus do ELO acessíveis.
+      action.view.win.location.assign(enderecoHistorico);
     } catch (error) {
       console.warn('[ELO ASE] Erro inesperado.', error);
       const detail = (typeof error === 'string' ? error
