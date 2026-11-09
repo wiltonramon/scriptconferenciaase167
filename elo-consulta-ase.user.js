@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         ELO | Consulta rápida do histórico ASE
 // @namespace    https://cad-elo.tse.jus.br/
-// @version      1.5.49
+// @version      1.5.50
 // @description  Consulta uma inscrição, abre o primeiro resultado e o histórico ASE, com painel flutuante e retorno à consulta inicial.
 // @match        https://cad-elo.tse.jus.br/sae/*
 // @run-at       document-idle
@@ -639,7 +639,7 @@
     activity.textContent = active ? 'Em consulta' : 'Pronto';
     activity.style.background = active ? '#dceaf8' : '#e9eff6';
     activity.style.color = active ? '#174975' : '#425e7d';
-    panel.querySelector('[data-election-select]').disabled = active;
+    obterSeletorEleicao(panel).disabled = active;
     for (const controle of panel.querySelectorAll('[data-turn]')) controle.disabled = active;
   }
 
@@ -844,7 +844,6 @@
   // O escopo pelo id do painel evita qualquer efeito sobre a página do ELO.
   const CSS_ESTADOS_PAINEL = `
     #${PANEL} button:focus-visible,
-    #${PANEL} select:focus-visible,
     #${PANEL} [data-status]:focus-visible { outline: 3px solid #f5b942 !important; outline-offset: 2px !important; }
     #${PANEL} [data-title]:focus { outline: 3px solid #9cc4e8 !important; outline-offset: 1px !important; }
     #${PANEL} [data-collapse]:hover,
@@ -945,14 +944,33 @@
     }
   }
 
+  /** Mantém o select fora da busca global do menu legado do ELO por campos visíveis. */
+  function isolarSeletorEleicao(elemento) {
+    const seletor = elemento.querySelector('[data-election-select]');
+    const rotulo = elemento.querySelector('[data-election-label]');
+    const doc = elemento.ownerDocument;
+    const suporte = doc.createElement('div');
+    suporte.setAttribute('data-election-picker', '');
+    seletor.after(suporte);
+    const area = suporte.attachShadow({mode:'open'});
+    const estilo = doc.createElement('style');
+    estilo.textContent = 'select:focus-visible { outline: 3px solid #f5b942; outline-offset: 2px; }';
+    area.append(estilo, rotulo, seletor);
+  }
+
+  function obterSeletorEleicao(elemento) {
+    return elemento.querySelector('[data-election-picker]').shadowRoot.querySelector('[data-election-select]');
+  }
+
   /** Cria o painel completo sem inseri-lo na página ou registrar interações. */
   function criarPainel(doc) {
     const elemento = doc.createElement('section');
     elemento.id = PANEL;
     elemento.setAttribute('aria-label', 'Consulta rápida ASE');
     elemento.innerHTML = obterHtmlPainel();
-    atualizarSelecaoPainel(elemento);
     aplicarEstilosPainel(elemento);
+    isolarSeletorEleicao(elemento);
+    atualizarSelecaoPainel(elemento);
     // O CSS é texto puro; a regra com :has fica separada para não invalidar as demais em navegadores antigos.
     const estados = elemento.querySelector('[data-elo-ase-estados]');
     estados.textContent = CSS_ESTADOS_PAINEL;
@@ -978,7 +996,7 @@
   /** Recria somente as opções de turno; não reaplica estilos que deslocariam o painel. */
   function atualizarSelecaoPainel(elemento = panel) {
     if (!elemento) return;
-    const seletor = elemento.querySelector('[data-election-select]');
+    const seletor = obterSeletorEleicao(elemento);
     if (!seletor.children.length) {
       for (const ano of Object.keys(ELEICOES).sort((a, b) => Number(b) - Number(a))) {
         const opcao = elemento.ownerDocument.createElement('option');
@@ -1064,7 +1082,7 @@
       definirSelecaoRecolhida(!escolhaEleitoralRecolhida);
       try { salvarSessao(); } catch { /* A expansão continua disponível sem armazenamento. */ }
     });
-    elemento.querySelector('[data-election-select]').addEventListener('change', alterarEleicaoPainel);
+    obterSeletorEleicao(elemento).addEventListener('change', alterarEleicaoPainel);
     elemento.querySelector('[data-turns]').addEventListener('change', alterarTurnosPainel);
     const campoTitulo = elemento.querySelector('[data-title]');
     campoTitulo.addEventListener('input', formatarCampoTitulo);
